@@ -1,0 +1,66 @@
+# Build artifacts
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio
+.vs/
+
+# Rider
+.idea/
+*.sln.iml
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Database files
+*.mdf
+*.ldf
+
+# Docker
+**/.docker/
+**/docker-compose.*.yml
+
+# Ignore secrets
+secrets.json
+
+# Ignore test results
+TestResults/
+
+# Ignore generated swagger
+swagger/
+
+# Ignore coverage reports
+coverage/
+
+# Ignore environment files
+.env
+.env.*
+
+# Ignore backup files
+*.bak
+*.tmp
+
+# Ignore docs output
+/docs/*.html
+/docs/*.pdf
+
+# Allow source, configs, Dockerfile, compose, and docs
+!src/
+!deploy/
+!docs/
+!*.sln
+!*.csproj
+!*.json
+!*.md
+!Dockerfile
+!docker-compose.yml
