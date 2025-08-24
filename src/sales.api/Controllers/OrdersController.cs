@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using BuildingBlocks.Contracts.Orders;
 using SalesApi.Models;
@@ -8,7 +9,8 @@ using SalesApi.Services;
 namespace SalesApi.Controllers
 {
     /// <summary>
-    /// Controller for managing orders in the sales system.
+    /// Controller for managing orders in the sales system with role-based authorization.
+    /// Order creation requires customer or admin role, reading is open access.
     /// </summary>
     [ApiController]
     [Route("orders")]
@@ -32,12 +34,25 @@ namespace SalesApi.Controllers
         }
 
         /// <summary>
-        /// Creates a new order with stock validation.
+        /// Creates a new order with stock validation. Requires customer or admin role.
         /// </summary>
         /// <param name="dto">Order creation data.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Created order details.</returns>
+        /// <response code="201">Order created successfully.</response>
+        /// <response code="400">Invalid order data.</response>
+        /// <response code="401">Unauthorized - JWT token required.</response>
+        /// <response code="403">Forbidden - Customer or admin role required.</response>
+        /// <response code="422">Unprocessable Entity - Insufficient stock.</response>
+        /// <response code="503">Service Unavailable - Cannot validate stock.</response>
         [HttpPost]
+        [Authorize(Roles = "customer,admin")]
+        [ProducesResponseType(typeof(OrderDto), 201)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(401)]
+        [ProducesResponseType(403)]
+        [ProducesResponseType(422)]
+        [ProducesResponseType(503)]
         public async Task<ActionResult<OrderDto>> CreateOrder([FromBody] CreateOrderDto dto, CancellationToken cancellationToken = default)
         {
             // Check ModelState for Data Annotations validation
@@ -162,12 +177,17 @@ namespace SalesApi.Controllers
         }
 
         /// <summary>
-        /// Gets order details by order ID.
+        /// Gets order details by order ID. Open access - no authentication required.
         /// </summary>
         /// <param name="id">Order identifier.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Order details.</returns>
+        /// <response code="200">Returns order details.</response>
+        /// <response code="404">Order not found.</response>
         [HttpGet("{id}")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(OrderDto), 200)]
+        [ProducesResponseType(404)]
         public async Task<ActionResult<OrderDto>> GetOrderById(Guid id, CancellationToken cancellationToken = default)
         {
             try
@@ -215,13 +235,18 @@ namespace SalesApi.Controllers
         }
 
         /// <summary>
-        /// Gets a paginated list of orders.
+        /// Gets a paginated list of orders. Open access - no authentication required.
         /// </summary>
         /// <param name="page">Page number (default: 1).</param>
         /// <param name="pageSize">Page size (default: 20).</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Paginated list of orders.</returns>
+        /// <response code="200">Returns paginated order list.</response>
+        /// <response code="400">Invalid pagination parameters.</response>
         [HttpGet]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(IEnumerable<OrderDto>), 200)]
+        [ProducesResponseType(400)]
         public async Task<ActionResult<IEnumerable<OrderDto>>> GetOrders(
             [FromQuery] int page = 1, 
             [FromQuery] int pageSize = 20, 
