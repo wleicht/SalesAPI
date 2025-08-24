@@ -5,6 +5,8 @@ using BuildingBlocks.Contracts.Orders;
 using SalesApi.Models;
 using SalesApi.Persistence;
 using SalesApi.Services;
+using BuildingBlocks.Events.Infrastructure;
+using BuildingBlocks.Events.Domain;
 
 namespace SalesApi.Controllers
 {
@@ -18,6 +20,7 @@ namespace SalesApi.Controllers
     {
         private readonly SalesDbContext _dbContext;
         private readonly IInventoryClient _inventoryClient;
+        private readonly IEventPublisher _eventPublisher;
         private readonly ILogger<OrdersController> _logger;
 
         /// <summary>
@@ -25,11 +28,17 @@ namespace SalesApi.Controllers
         /// </summary>
         /// <param name="dbContext">Sales database context.</param>
         /// <param name="inventoryClient">Inventory API client.</param>
+        /// <param name="eventPublisher">Event publisher for domain events.</param>
         /// <param name="logger">Logger instance.</param>
-        public OrdersController(SalesDbContext dbContext, IInventoryClient inventoryClient, ILogger<OrdersController> logger)
+        public OrdersController(
+            SalesDbContext dbContext, 
+            IInventoryClient inventoryClient,
+            IEventPublisher eventPublisher,
+            ILogger<OrdersController> logger)
         {
             _dbContext = dbContext;
             _inventoryClient = inventoryClient;
+            _eventPublisher = eventPublisher;
             _logger = logger;
         }
 
@@ -60,6 +69,8 @@ namespace SalesApi.Controllers
             {
                 return BadRequest(ModelState);
             }
+
+            using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
 
             try
             {
@@ -134,6 +145,40 @@ namespace SalesApi.Controllers
                 _dbContext.Orders.Add(order);
                 await _dbContext.SaveChangesAsync(cancellationToken);
 
+                // Publish OrderConfirmedEvent (only if event publisher is available)
+                try
+                {
+                    var orderConfirmedEvent = new OrderConfirmedEvent
+                    {
+                        OrderId = order.Id,
+                        CustomerId = order.CustomerId,
+                        TotalAmount = order.TotalAmount,
+                        Status = order.Status,
+                        OrderCreatedAt = order.CreatedAt,
+                        CorrelationId = Guid.NewGuid().ToString(),
+                        Items = orderItems.Select(item => new OrderItemEvent
+                        {
+                            ProductId = item.ProductId,
+                            ProductName = item.ProductName,
+                            Quantity = item.Quantity,
+                            UnitPrice = item.UnitPrice
+                        }).ToList()
+                    };
+
+                    await _eventPublisher.PublishAsync(orderConfirmedEvent, cancellationToken);
+                    
+                    _logger.LogInformation("Published OrderConfirmedEvent for order {OrderId} with correlation {CorrelationId}", 
+                        order.Id, orderConfirmedEvent.CorrelationId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to publish OrderConfirmedEvent for order {OrderId}. Order created but event not published.", order.Id);
+                    // Continue execution - order is still valid even if event publishing fails
+                }
+
+                // Commit transaction
+                await transaction.CommitAsync(cancellationToken);
+
                 _logger.LogInformation("Order {OrderId} created successfully for customer {CustomerId} with total amount {TotalAmount}", 
                     order.Id, order.CustomerId, order.TotalAmount);
 
@@ -160,6 +205,7 @@ namespace SalesApi.Controllers
             }
             catch (HttpRequestException ex)
             {
+                await transaction.RollbackAsync(cancellationToken);
                 _logger.LogError(ex, "Failed to communicate with Inventory API while creating order");
                 return StatusCode(503, ProblemDetailsFactory.CreateProblemDetails(HttpContext, 
                     statusCode: 503, 
@@ -168,6 +214,7 @@ namespace SalesApi.Controllers
             }
             catch (Exception ex)
             {
+                await transaction.RollbackAsync(cancellationToken);
                 _logger.LogError(ex, "Unexpected error occurred while creating order for customer {CustomerId}", dto.CustomerId);
                 return StatusCode(500, ProblemDetailsFactory.CreateProblemDetails(HttpContext, 
                     statusCode: 500, 

@@ -1,487 +1,531 @@
-# Endpoint Tests - Complete System Integration Testing with JWT Authentication
+# Endpoint Tests - Comprehensive Integration Testing Suite
 
-This project contains comprehensive automated integration tests to validate the complete microservices architecture, including API Gateway routing, JWT authentication and authorization, backend services communication, and end-to-end functionality.
+This project contains a comprehensive integration testing suite that validates all aspects of the SalesAPI microservices architecture, including authentication, authorization, CRUD operations, service communication, event-driven architecture, and system health.
 
-**Note:** This is the main and only test project for the solution. The previous `api.tests` project has been removed to maintain a clean, unified testing approach.
+## ?? Testing Philosophy
 
-## ??? Test Architecture
+The testing strategy follows a **unified integration testing approach** using a single test project that covers:
 
-The test suite covers the complete microservices ecosystem with security:
-- **API Gateway** (Port 6000) - YARP reverse proxy, routing, and JWT token issuer
-- **Inventory API** (Port 5000) - Product management with admin role protection
-- **Sales API** (Port 5001) - Order processing with customer authentication and stock validation
-- **JWT Authentication** - Role-based access control and token validation
+- **End-to-End Workflows**: Complete user journeys from authentication to business operations
+- **Service Integration**: Cross-service communication and data consistency
+- **Authentication & Authorization**: JWT token-based security across all services
+- **Event-Driven Architecture**: Asynchronous message processing and event flows
+- **Business Logic Validation**: Core domain rules and constraints
+- **System Health**: Service availability and infrastructure readiness
 
-## ?? Prerequisites
+## ?? Test Coverage Overview
 
-### Running the Complete System
-Before executing tests, ensure all services are running:
+### **Total Tests: 47**
 
-```bash
-# Terminal 1: Start Inventory API
-dotnet run --project src/inventory.api --urls "http://localhost:5000"
+| Test Category | Count | Description |
+|---------------|-------|-------------|
+| **Authentication Tests** | 10 | JWT token generation, validation, and role-based access |
+| **Gateway Tests** | 13 | YARP routing, health checks, and reverse proxy functionality |
+| **Product CRUD Tests** | 6 | Inventory management with admin authorization |
+| **Order CRUD Tests** | 8 | Sales operations with customer authentication |
+| **Event-Driven Tests** | 3 | ? Asynchronous event processing and stock management |
+| **API Health Tests** | 7 | Service availability and system monitoring |
 
-# Terminal 2: Start Sales API  
-dotnet run --project src/sales.api --urls "http://localhost:5001"
+## ?? Event-Driven Architecture Tests
 
-# Terminal 3: Start API Gateway (with JWT auth)
-dotnet run --project src/gateway --urls "http://localhost:6000"
+### **EventDrivenTests.cs** ? NEW
+
+This test class validates the complete event-driven architecture implementation:
+
+#### **Test 1: CreateOrder_ShouldPublishEventAndDebitStock**
+- **Purpose**: Validates end-to-end event-driven order processing
+- **Flow**:
+  1. Authenticate as admin and create product with initial stock
+  2. Authenticate as customer and create order
+  3. Verify `OrderConfirmedEvent` is published to RabbitMQ
+  4. Confirm automatic stock deduction via event consumption
+  5. Validate final stock quantity reflects the order
+
+```csharp
+[Fact]
+public async Task CreateOrder_ShouldPublishEventAndDebitStock()
+{
+    // Arrange - Create product with stock
+    var product = await CreateTestProduct(stockQuantity: 100);
+    
+    // Act - Create order (triggers event)
+    var order = await CreateTestOrder(product.Id, quantity: 5);
+    
+    // Wait for event processing
+    await Task.Delay(3000);
+    
+    // Assert - Stock was automatically debited
+    var updatedProduct = await GetProduct(product.Id);
+    Assert.Equal(95, updatedProduct.StockQuantity); // 100 - 5 = 95
+}
 ```
 
-### Database Setup
-Ensure both databases are created and migrated:
+#### **Test 2: CreateOrder_WithInsufficientStock_ShouldNotCreateOrderOrDebitStock**
+- **Purpose**: Validates error handling when stock is insufficient
+- **Flow**:
+  1. Create product with low stock (2 units)
+  2. Attempt to order more than available (10 units)
+  3. Verify order creation fails with 422 Unprocessable Entity
+  4. Confirm stock remains unchanged (no events processed)
 
-```bash
-# Apply Inventory migrations
-dotnet ef database update --project src/inventory.api
-
-# Apply Sales migrations
-dotnet ef database update --project src/sales.api
+```csharp
+[Fact]
+public async Task CreateOrder_WithInsufficientStock_ShouldNotCreateOrderOrDebitStock()
+{
+    // Arrange - Create product with low stock
+    var product = await CreateTestProduct(stockQuantity: 2);
+    
+    // Act - Try to order more than available
+    var response = await AttemptOrderCreation(product.Id, quantity: 10);
+    
+    // Assert - Order rejected and stock unchanged
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    
+    var unchangedProduct = await GetProduct(product.Id);
+    Assert.Equal(2, unchangedProduct.StockQuantity); // Stock unchanged
+}
 ```
 
-### System Health Verification
-Verify all services are healthy before running tests:
+#### **Test 3: CreateMultipleOrders_ShouldProcessAllEventsCorrectly**
+- **Purpose**: Validates concurrent event processing and consistency
+- **Flow**:
+  1. Create product with sufficient stock (50 units)
+  2. Create multiple orders sequentially (3, 7, 2 units)
+  3. Wait for all events to be processed
+  4. Verify final stock reflects all deductions (50 - 12 = 38)
 
-```bash
-# Check all services via gateway
-curl http://localhost:6000/health                   # Gateway health
-curl http://localhost:6000/inventory/health         # Inventory via gateway
-curl http://localhost:6000/sales/health             # Sales via gateway
-
-# Check JWT authentication
-curl -X POST "http://localhost:6000/auth/token" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
-
-# Check direct service access (optional)
-curl http://localhost:5000/health                   # Inventory direct
-curl http://localhost:5001/health                   # Sales direct
+```csharp
+[Fact]
+public async Task CreateMultipleOrders_ShouldProcessAllEventsCorrectly()
+{
+    // Arrange - Create product with sufficient stock
+    var product = await CreateTestProduct(stockQuantity: 50);
+    
+    // Act - Create multiple orders
+    await CreateTestOrder(product.Id, quantity: 3);
+    await CreateTestOrder(product.Id, quantity: 7);
+    await CreateTestOrder(product.Id, quantity: 2);
+    
+    // Wait for all events to be processed
+    await Task.Delay(10000);
+    
+    // Assert - All deductions applied correctly
+    var finalProduct = await GetProduct(product.Id);
+    Assert.Equal(38, finalProduct.StockQuantity); // 50 - 3 - 7 - 2 = 38
+}
 ```
+
+## ?? Authentication Tests
+
+### **AuthenticationTests.cs**
+
+Comprehensive JWT authentication and authorization testing:
+
+#### Core Authentication Features
+- **Token Generation**: Validates JWT token creation with valid credentials
+- **Token Validation**: Ensures invalid/expired tokens are rejected
+- **Role-Based Access**: Verifies admin/customer role enforcement
+- **Open Access**: Confirms public endpoints work without authentication
+
+#### Key Test Cases
+```csharp
+[Fact]
+public async Task GenerateToken_WithValidCredentials_ShouldReturnJwtToken()
+
+[Fact]
+public async Task AccessProtectedEndpoint_WithValidToken_ShouldSucceed()
+
+[Fact]
+public async Task AccessProtectedEndpoint_WithoutToken_ShouldReturn401()
+
+[Fact]
+public async Task AccessAdminEndpoint_WithCustomerToken_ShouldReturn403()
+```
+
+## ?? Gateway Tests
+
+### **GatewayApiTests.cs** & **GatewayRoutingTests.cs**
+
+Tests for YARP reverse proxy and routing functionality:
+
+#### Gateway Features Tested
+- **Service Health**: Gateway health endpoint availability
+- **Route Configuration**: Dynamic route discovery and configuration
+- **Backend Routing**: Request forwarding to appropriate services
+- **Error Handling**: Graceful handling of backend service failures
+
+#### Key Test Cases
+```csharp
+[Fact]
+public async Task GetHealth_ShouldReturnHealthy()
+
+[Fact]
+public async Task GetRoutes_ShouldReturnConfiguredRoutes()
+
+[Fact]
+public async Task RouteToInventory_ShouldForwardToInventoryService()
+
+[Fact]
+public async Task RouteToSales_ShouldForwardToSalesService()
+```
+
+## ?? Product CRUD Tests
+
+### **ProductCrudTests.cs** & **InventoryApiTests.cs**
+
+Comprehensive testing of inventory management functionality:
+
+#### Features Tested
+- **Admin Authorization**: Product creation/update requires admin role
+- **Open Access**: Product reading available without authentication
+- **Data Validation**: Input validation and error handling
+- **Business Rules**: Price and stock quantity constraints
+
+#### Key Test Cases
+```csharp
+[Fact]
+public async Task CreateProduct_WithAdminToken_ShouldCreateProduct()
+
+[Fact]
+public async Task CreateProduct_WithoutToken_ShouldReturn401()
+
+[Fact]
+public async Task GetProducts_WithoutAuthentication_ShouldReturnProducts()
+
+[Fact]
+public async Task UpdateProduct_WithAdminToken_ShouldUpdateProduct()
+```
+
+## ?? Order CRUD Tests
+
+### **OrderCrudTests.cs** & **SalesApiTests.cs**
+
+Testing of sales operations and order management:
+
+#### Features Tested
+- **Customer Authorization**: Order creation requires customer/admin role
+- **Stock Validation**: Real-time inventory checking via HTTP
+- **Order Processing**: Complete order workflow with business logic
+- **Price Freezing**: Unit prices captured at order time
+
+#### Key Test Cases
+```csharp
+[Fact]
+public async Task CreateOrder_WithValidCustomerToken_ShouldCreateOrder()
+
+[Fact]
+public async Task CreateOrder_WithInsufficientStock_ShouldReturnError()
+
+[Fact]
+public async Task GetOrders_WithoutAuthentication_ShouldReturnOrders()
+
+[Fact]
+public async Task CreateOrder_ShouldValidateStockAvailability()
+```
+
+## ?? API Health Tests
+
+Health monitoring and service availability testing across all services:
+
+#### Features Tested
+- **Service Health**: Individual service health endpoints
+- **Gateway Health**: Unified health checking through gateway
+- **Infrastructure**: Database and external dependency health
+- **Swagger Documentation**: API documentation availability
 
 ## ?? Running the Tests
 
-### Execute Complete Test Suite
+### **Prerequisites**
+
+Before running tests, ensure all services are running:
+
 ```bash
-# Run all 44 integration tests including authentication
-dotnet test tests/endpoint.tests/endpoint.tests.csproj
+# Start infrastructure services
+docker-compose -f docker-compose.infrastructure.yml up -d
+
+# Start all microservices
+dotnet run --project src/inventory.api --urls "http://localhost:5000" &
+dotnet run --project src/sales.api --urls "http://localhost:5001" &
+dotnet run --project src/gateway --urls "http://localhost:6000" &
 ```
 
-### Execute by Service Category
+### **Run All Tests**
 ```bash
-# Gateway-specific tests (13 tests)
+# Execute all 47 tests
+dotnet test tests/endpoint.tests/endpoint.tests.csproj
+
+# Run with detailed output
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger "console;verbosity=normal"
+```
+
+### **Run Specific Test Categories**
+
+```bash
+# Event-driven architecture tests (NEW)
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "EventDrivenTests"
+
+# Authentication and security tests
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "AuthenticationTests"
+
+# Gateway and routing tests
 dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "Gateway"
 
-# Authentication tests (10 tests)
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "AuthenticationTests"
-
-# Inventory API tests (11 tests)
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "Inventory"
-
-# Sales API tests (10 tests)
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "Sales"
-```
-
-### Execute by Functionality
-```bash
-# API Gateway tests only
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "GatewayApiTests"
-
-# Gateway routing tests only
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "GatewayRoutingTests"
-
-# Product CRUD tests (with JWT auth)
+# Product management tests
 dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "ProductCrudTests"
 
-# Order CRUD tests (with JWT auth)
+# Order processing tests
 dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "OrderCrudTests"
 
-# JWT Authentication tests only
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "AuthenticationTests"
+# Service health tests
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "Health"
 ```
 
-### Execute with Detailed Logging
+### **Run Tests with Coverage**
 ```bash
-# Run tests with verbose output for debugging
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger "console;verbosity=detailed"
+# Install coverage tools
+dotnet tool install --global dotnet-reportgenerator-globaltool
+
+# Run tests with coverage
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --collect:"XPlat Code Coverage"
+
+# Generate coverage report
+reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coverage-report" -reporttypes:Html
 ```
-
-## ?? Complete Test Coverage (44 Tests)
-
-### Authentication Tests (`AuthenticationTests` - 10 tests)
-| Test | Description | Validates | Security Aspect |
-|------|-------------|-----------|----------------|
-| `Login_WithValidCredentials_ShouldReturnToken` | Admin login success | ? JWT token generation | Token issuance |
-| `Login_WithInvalidCredentials_ShouldReturnUnauthorized` | Invalid login handling | ? Authentication failure | Credential validation |
-| `GetTestUsers_ShouldReturnAvailableUsers` | Development user listing | ? Test user availability | Development support |
-| `CreateProduct_WithoutToken_ShouldReturnUnauthorized` | Unauthorized product creation | ? 401 protection | Missing token |
-| `CreateProduct_WithValidAdminToken_ShouldBeAuthorized` | Admin product creation | ? Admin authorization | Role validation |
-| `CreateProduct_WithCustomerToken_ShouldReturnForbidden` | Customer product creation denial | ? 403 protection | Role-based access |
-| `CreateOrder_WithoutToken_ShouldReturnUnauthorized` | Unauthorized order creation | ? 401 protection | Missing token |
-| `CreateOrder_WithValidCustomerToken_ShouldBeAuthorized` | Customer order creation | ? Customer authorization | Role validation |
-| `ReadOperations_ShouldBeOpenAccess` | Open read access | ? Anonymous reading | Open endpoints |
-| `JwtToken_ShouldContainCorrectClaims` | JWT token structure | ? Token format | Claims validation |
-
-### API Gateway Tests (`GatewayApiTests` - 4 tests)
-| Test | Description | Validates | Gateway Feature |
-|------|-------------|-----------|----------------|
-| `HealthCheck_ShouldReturnOk` | Gateway health endpoint | ? Gateway availability | Health monitoring |
-| `Swagger_ShouldBeAccessible` | Gateway API documentation | ? Documentation access | API docs |
-| `GatewayStatus_ShouldReturnStatusInformation` | Gateway status endpoint | ? Status information | Service info |
-| `GatewayRoutes_ShouldReturnRoutingInformation` | Gateway routes endpoint | ? Routing configuration | Route discovery |
-
-### Gateway Routing Tests (`GatewayRoutingTests` - 9 tests)
-| Test | Description | Validates | Route Pattern |
-|------|-------------|-----------|---------------|
-| `InventoryRoute_Products_ShouldRouteToInventoryApi` | Product listing via gateway | ? `/inventory/*` routing | `/inventory/products` |
-| `InventoryRoute_Health_ShouldRouteToInventoryApi` | Inventory health via gateway | ? Health check routing | `/inventory/health` |
-| `InventoryRoute_Swagger_ShouldRouteToInventoryApi` | Inventory swagger via gateway | ? Documentation routing | `/inventory/swagger` |
-| `InventoryRoute_WithId_ShouldRouteCorrectly` | Parameterized routing | ? Dynamic path routing | `/inventory/products/{id}` |
-| `SalesRoute_Orders_ShouldRouteToSalesApi` | Order listing via gateway | ? `/sales/*` routing | `/sales/orders` |
-| `SalesRoute_Health_ShouldRouteToSalesApi` | Sales health via gateway | ? Health check routing | `/sales/health` |
-| `SalesRoute_Swagger_ShouldRouteToSalesApi` | Sales swagger via gateway | ? Documentation routing | `/sales/swagger` |
-| `SalesRoute_WithId_ShouldRouteCorrectly` | Parameterized routing | ? Dynamic path routing | `/sales/orders/{id}` |
-| `NonExistentRoute_ShouldReturnNotFound` | Invalid route handling | ? 404 error handling | `/nonexistent/*` |
-
-### Inventory API Tests (`InventoryApiTests` - 5 tests)
-| Test | Description | Validates | Security Level |
-|------|-------------|-----------|---------------|
-| `HealthCheck_ShouldReturnOk` | Health endpoint availability | ? Service health | Open access |
-| `Swagger_ShouldBeAccessible` | API documentation access | ? Documentation | Open access |
-| `GetProducts_ShouldReturnOk` | Product listing endpoint | ? Data retrieval | Open access |
-| `GetProducts_WithPagination_ShouldReturnOk` | Paginated product listing | ? Pagination | Open access |
-| `GetProductById_WithInvalidId_ShouldReturnNotFound` | Invalid product lookup | ? Error handling | Open access |
-
-### Product CRUD Tests (`ProductCrudTests` - 6 tests)
-| Test | Description | Validates | Required Role |
-|------|-------------|-----------|--------------|
-| `CreateProduct_WithValidData_ShouldReturnCreated` | Product creation with admin auth | ? CRUD operations | `admin` |
-| `CreateProduct_WithInvalidData_ShouldReturnBadRequest` | Validation with admin auth | ? Input validation | `admin` |
-| `GetProducts_ShouldReturnProductsList` | Product listing | ? Data retrieval | None (open) |
-| `CreateProduct_WithoutToken_ShouldReturnUnauthorized` | Unauthorized creation | ? 401 protection | None |
-| `CreateProduct_WithCustomerToken_ShouldReturnForbidden` | Role validation | ? 403 protection | `customer` (invalid) |
-
-### Sales API Tests (`SalesApiTests` - 3 tests)
-| Test | Description | Validates | Security Level |
-|------|-------------|-----------|---------------|
-| `HealthCheck_ShouldReturnOk` | Health endpoint availability | ? Service health | Open access |
-| `Swagger_ShouldBeAccessible` | API documentation access | ? Documentation | Open access |
-| `Orders_Endpoint_ShouldBeAccessible` | Order endpoint availability | ? Endpoint routing | Open access |
-
-### Order CRUD Tests (`OrderCrudTests` - 8 tests)
-| Test | Description | Validates | Required Role |
-|------|-------------|-----------|--------------|
-| `CreateOrder_WithValidData_ShouldReturnCreated` | Order creation with customer auth | ? Business logic | `customer` or `admin` |
-| `CreateOrder_WithInvalidData_ShouldReturnBadRequest` | Order validation with auth | ? Input validation | `customer` or `admin` |
-| `CreateOrder_WithNegativeQuantity_ShouldReturnBadRequest` | Quantity validation with auth | ? Business rules | `customer` or `admin` |
-| `GetOrders_ShouldReturnOrdersList` | Order listing | ? Data retrieval | None (open) |
-| `GetOrders_WithPagination_ShouldReturnOk` | Paginated order listing | ? Pagination | None (open) |
-| `GetOrderById_WithInvalidId_ShouldReturnNotFound` | Invalid order lookup | ? Error handling | None (open) |
-| `GetOrders_WithInvalidPagination_ShouldReturnBadRequest` | Pagination validation | ? Parameter validation | None (open) |
-| `CreateOrder_WithoutToken_ShouldReturnUnauthorized` | Unauthorized order creation | ? 401 protection | None |
-
-## ?? Authentication Test Strategy
-
-### JWT Token Management
-Tests use a helper method to obtain authentication tokens:
-
-```csharp
-private async Task<string?> GetAuthTokenAsync(string username, string password)
-{
-    var loginRequest = new { Username = username, Password = password };
-    var response = await _gatewayClient.PostAsync("auth/token", content);
-    // Returns JWT token or null if authentication fails
-}
-```
-
-### Test User Accounts
-Tests authenticate using these development accounts:
-
-| Username | Password | Role | Test Usage |
-|----------|----------|------|------------|
-| `admin` | `admin123` | admin | Product creation, full access testing |
-| `customer1` | `password123` | customer | Order creation, customer role testing |
-| `customer2` | `password123` | customer | Additional customer scenarios |
-| `manager` | `manager123` | manager | Reserved for future role testing |
-
-### Security Test Scenarios
-
-#### Protected Operations Testing
-1. **Without Token** ? 401 Unauthorized
-2. **With Invalid Token** ? 401 Unauthorized  
-3. **With Valid Token, Wrong Role** ? 403 Forbidden
-4. **With Valid Token, Correct Role** ? 200 OK (or business logic response)
-
-#### Open Operations Testing
-1. **Read Operations** ? Always accessible (no auth required)
-2. **Health Checks** ? Always accessible for monitoring
-3. **Documentation** ? Always accessible for development
 
 ## ?? Test Configuration
 
-### Service Endpoints
-Tests are configured to connect to:
-- **API Gateway**: `http://localhost:6000/` (Authentication + Routing)
-- **Inventory API (Direct)**: `http://localhost:5000/` (Role-protected)
-- **Sales API (Direct)**: `http://localhost:5001/` (Role-protected)
+### **Test Base Classes**
 
-### Authentication Configuration
-Tests use the same JWT configuration as the services:
-- **Issuer**: `SalesAPI-Gateway`
-- **Audience**: `SalesAPI-Services`
-- **Token Lifetime**: 1 hour
-- **Algorithm**: HMAC SHA-256
+The tests use shared base classes for common functionality:
 
-### Test Data Patterns
-Tests use:
-- **Authentication credentials** for various user roles
-- **Bearer tokens** in Authorization headers
-- **Realistic data** for creation scenarios
-- **Edge cases** for validation testing
-- **Invalid credentials** for security testing
-- **Role mismatch scenarios** for authorization testing
-
-### Expected Response Codes
-Tests validate:
-- **200 OK**: Successful operations
-- **201 Created**: Resource creation with proper auth
-- **400 Bad Request**: Invalid input data
-- **401 Unauthorized**: Missing or invalid JWT token
-- **403 Forbidden**: Valid token but insufficient role permissions
-- **404 Not Found**: Missing resources or invalid routes
-- **422 Unprocessable Entity**: Business rule violations
-- **503 Service Unavailable**: Backend service communication failures
-
-## ?? Test Implementation Strategy
-
-### Authentication Flow Testing
 ```csharp
-// Example: Testing admin-only product creation
-var token = await GetAuthTokenAsync("admin", "admin123");
-_client.DefaultRequestHeaders.Authorization = 
-    new AuthenticationHeaderValue("Bearer", token);
-
-var response = await _client.PostAsync("products", content);
-Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
-Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
-```
-
-### Role-Based Access Testing
-```csharp
-// Example: Testing customer attempting admin operation
-var customerToken = await GetAuthTokenAsync("customer1", "password123");
-_client.DefaultRequestHeaders.Authorization = 
-    new AuthenticationHeaderValue("Bearer", customerToken);
-
-var response = await _client.PostAsync("products", content);
-Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-```
-
-### Open Access Testing
-```csharp
-// Example: Testing open read access
-var response = await _client.GetAsync("products"); // No auth header
-Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
-```
-
-## ?? Test Execution Flow
-
-### 1. Authentication Tests
-- JWT token generation and validation
-- User credential verification
-- Role assignment validation
-- Token expiration handling
-
-### 2. Authorization Tests
-- Role-based access control
-- Protected endpoint security
-- Permission enforcement
-- Forbidden access prevention
-
-### 3. Open Access Tests
-- Anonymous read operations
-- Public endpoint availability
-- Health check accessibility
-- Documentation access
-
-### 4. Integration Tests
-- Cross-service communication with auth
-- Stock validation with customer tokens
-- End-to-end order processing with authentication
-- Gateway routing with security
-
-### 5. Error Handling Tests
-- Invalid authentication scenarios
-- Expired token handling
-- Role mismatch situations
-- Service unavailability with auth
-
-## ?? Troubleshooting Test Failures
-
-### Common Authentication Test Failures
-
-#### JWT Token Service Unavailable
-```
-System.Net.Http.HttpRequestException: Connection refused (localhost:6000)
-```
-**Solutions:**
-1. Verify Gateway service is running on port 6000
-2. Check Gateway startup logs for JWT configuration errors
-3. Ensure JWT key is properly configured in appsettings.json
-
-#### Authentication Service Errors
-```
-HTTP 500 Internal Server Error on /auth/token
-```
-**Solutions:**
-1. Check JWT configuration (Key, Issuer, Audience)
-2. Verify JWT key is at least 256 bits (64 characters)
-3. Review Gateway authentication logs
-
-#### Token Validation Failures
-```
-HTTP 401 Unauthorized with valid token
-```
-**Solutions:**
-1. Ensure all services use identical JWT configuration
-2. Check token expiration (1-hour default)
-3. Verify token format and claims
-
-#### Role Authorization Failures
-```
-HTTP 403 Forbidden with correct token
-```
-**Expected Behavior:** This indicates proper security - user has valid token but wrong role.
-
-### Debugging Authentication Issues
-
-```bash
-# Verify authentication service
-curl -X POST "http://localhost:6000/auth/token" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
-
-# Check token structure (decode JWT at jwt.io)
-echo "<your-jwt-token>" | base64 -d
-
-# Test protected endpoints
-curl -H "Authorization: Bearer <token>" \
-  "http://localhost:5000/products" -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Test","description":"Test","price":10,"stockQuantity":1}'
-
-# Verify services are running
-curl http://localhost:6000/health
-curl http://localhost:5000/health  
-curl http://localhost:5001/health
-```
-
-### Authentication Configuration Issues
-
-#### Mismatched JWT Settings
-Ensure identical configuration across all services:
-```json
+public class BaseIntegrationTest
 {
-  "Jwt": {
-    "Key": "same-key-in-all-services",
-    "Issuer": "SalesAPI-Gateway", 
-    "Audience": "SalesAPI-Services"
-  }
+    protected readonly HttpClient _gatewayClient;
+    protected readonly HttpClient _inventoryClient;
+    protected readonly HttpClient _salesClient;
+    
+    protected async Task<string?> GetAuthTokenAsync(string username, string password)
+    protected async Task<T> GetAsync<T>(string endpoint)
+    protected async Task<HttpResponseMessage> PostAsync<T>(string endpoint, T data)
 }
 ```
 
-#### Clock Skew Issues
-JWT validation includes time validation. Ensure system clocks are synchronized.
+### **Test Data Management**
 
-## ?? Authentication Test Metrics
+Each test creates its own isolated test data:
 
-### Current Coverage
-- **Total Tests**: 44
-- **Authentication Tests**: 10 (23%)
-- **Protected Endpoint Tests**: 15 (34%)
-- **Open Access Tests**: 19 (43%)
-- **Success Rate**: 100%
+```csharp
+protected async Task<ProductDto> CreateTestProduct(
+    string name = "Test Product",
+    decimal price = 99.99m,
+    int stockQuantity = 100)
 
-### Security Test Coverage
-- **JWT Token Generation**: ? Covered
-- **Role-Based Authorization**: ? Covered
-- **Unauthorized Access Prevention**: ? Covered
-- **Token Validation**: ? Covered
-- **Permission Enforcement**: ? Covered
-- **Open Access Verification**: ? Covered
-
-### Performance Benchmarks
-- **Authentication Test Duration**: 50-200ms per test
-- **JWT Token Generation**: <50ms
-- **Token Validation**: <10ms per request
-- **Complete Suite Duration**: ~15-20 seconds
-- **Authentication Service Response**: <100ms average
-
-## ?? Test Quality Standards
-
-### Security Testing Best Practices Implemented
-- ? **Comprehensive role testing** for all user types
-- ? **Negative security testing** (unauthorized access attempts)
-- ? **Token lifecycle testing** (generation, validation, expiration)
-- ? **Permission boundary testing** (role-based access)
-- ? **Open access verification** (ensuring public endpoints work)
-- ? **Cross-service authentication** testing
-
-### Authentication Test Design Principles
-- ? **Independent test execution** (each test gets fresh tokens)
-- ? **Realistic user scenarios** (admin vs customer workflows)
-- ? **Graceful degradation** (tests handle auth service unavailability)
-- ? **Clear assertions** (specific status codes and behaviors)
-- ? **Comprehensive coverage** (all auth scenarios covered)
-
-## ?? Continuous Integration Considerations
-
-### Prerequisites for CI/CD with Authentication
-1. **Service startup orchestration** (Gateway ? Backend APIs)
-2. **JWT configuration** management (secrets/environment variables)
-3. **Authentication service health** verification before tests
-4. **Token caching** for test performance
-5. **Security configuration** validation
-
-### Recommended CI Pipeline for Authenticated System
-```yaml
-# Example pipeline steps
-- Setup databases and apply migrations
-- Configure JWT secrets from environment
-- Start Inventory API (background)
-- Start Sales API (background)  
-- Start Gateway with JWT auth (background)
-- Wait for all health checks to pass
-- Verify authentication service availability
-- Run authentication tests first
-- Run protected endpoint tests
-- Run integration tests with auth
-- Cleanup services and secrets
+protected async Task<OrderDto> CreateTestOrder(
+    Guid productId,
+    int quantity,
+    string customerRole = "customer1")
 ```
 
-## ?? Test Documentation Standards
+### **Event Testing Utilities**
 
-### Authentication Test Documentation
-- **Purpose**: Validates JWT-based security implementation
-- **Scope**: All authentication and authorization scenarios
-- **Prerequisites**: Gateway with JWT service running
-- **Test Users**: Development accounts with known credentials
-- **Security Level**: Role-based access control validation
+Specialized utilities for event-driven testing:
 
-### Protected Endpoint Test Documentation
-- **Authorization**: Required JWT token with appropriate role
-- **Token Source**: Gateway authentication service
-- **Role Requirements**: Documented per endpoint
-- **Fallback Behavior**: Graceful test degradation if auth unavailable
+```csharp
+protected async Task WaitForEventProcessing(int milliseconds = 3000)
+protected async Task VerifyStockDeduction(Guid productId, int expectedStock)
+protected async Task VerifyOrderEventPublished(Guid orderId)
+```
 
----
+## ?? Test Execution Timeline
 
-## ?? Security Notes for Developers
+### **Typical Test Run Performance**
 
-- **Development Users**: Only for testing - never use in production
-- **JWT Secrets**: Use environment variables in production
-- **Token Expiration**: Default 1 hour - adjust based on security requirements
-- **Test Isolation**: Each test gets fresh authentication tokens
-- **Error Handling**: Tests validate both success and failure security scenarios
-- **Unified Testing**: All tests are consolidated in this single project for maintainability
+| Test Category | Execution Time | Description |
+|---------------|----------------|-------------|
+| **Authentication** | ~2-3 seconds | Fast token validation tests |
+| **Gateway** | ~3-4 seconds | Network routing verification |
+| **Product CRUD** | ~4-5 seconds | Database operations |
+| **Order CRUD** | ~5-6 seconds | Cross-service communication |
+| **Event-Driven** | ~15-20 seconds | ? Asynchronous processing wait times |
+| **Health Checks** | ~1-2 seconds | Simple endpoint validation |
 
-The comprehensive test suite ensures that the JWT authentication system works correctly while maintaining the security posture of the microservices architecture. All authentication flows, role-based permissions, and security boundaries are thoroughly validated in this unified testing approach.
+**Total Execution Time**: ~30-40 seconds for all 47 tests
+
+### **Event-Driven Test Timing**
+
+Event-driven tests require additional wait time for asynchronous processing:
+
+```csharp
+// Wait for event processing
+await Task.Delay(3000);  // Single event processing
+await Task.Delay(10000); // Multiple concurrent events
+```
+
+This ensures events are fully processed before assertions are made.
+
+## ?? Troubleshooting Tests
+
+### **Common Test Failures**
+
+#### **Services Not Running**
+```
+Error: Connection refused to localhost:5000
+```
+**Solution**: Ensure all services are started before running tests
+
+#### **Database Connection Issues**
+```
+Error: Unable to connect to SQL Server
+```
+**Solution**: Verify SQL Server container is running and connection strings are correct
+
+#### **RabbitMQ Connection Failures** ?
+```
+Error: Event-driven tests failing - stock not debited
+```
+**Solution**: 
+1. Check RabbitMQ container: `docker ps`
+2. Verify RabbitMQ management UI: http://localhost:15672
+3. Check service logs for event processing errors
+
+#### **Authentication Token Expiry**
+```
+Error: 401 Unauthorized during test execution
+```
+**Solution**: Tests automatically generate fresh tokens, but verify JWT configuration
+
+#### **Event Processing Timeout** ?
+```
+Error: Expected stock 95, but was 100
+```
+**Solution**: 
+1. Increase wait time in event tests
+2. Check event handler logs for processing errors
+3. Verify event publishing is working correctly
+
+### **Test Environment Setup**
+
+```bash
+# Verify all services are healthy
+curl http://localhost:6000/health
+curl http://localhost:5000/health  
+curl http://localhost:5001/health
+
+# Check RabbitMQ is accessible
+curl -u admin:admin123 http://localhost:15672/api/overview
+
+# Verify databases are accessible
+dotnet ef database update --project src/inventory.api
+dotnet ef database update --project src/sales.api
+```
+
+## ?? Test Metrics & Reporting
+
+### **Test Result Analysis**
+
+Monitor test execution with these metrics:
+
+```bash
+# Test execution summary
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger trx
+
+# Performance profiling
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger "console;verbosity=diagnostic"
+
+# Test result reporting
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --results-directory "test-results"
+```
+
+### **Continuous Integration**
+
+The tests are designed for CI/CD pipeline integration:
+
+```yaml
+# Example GitHub Actions configuration
+- name: Run Integration Tests
+  run: |
+    docker-compose -f docker-compose.infrastructure.yml up -d
+    sleep 30  # Wait for services to start
+    dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger trx
+```
+
+## ?? Test Coverage Goals
+
+### **Current Coverage: 47 Tests**
+
+- ? **Authentication**: Complete JWT workflow coverage
+- ? **Authorization**: Role-based access control validation
+- ? **CRUD Operations**: Full business logic testing
+- ? **Service Integration**: Cross-service communication
+- ? **Event-Driven Architecture**: ? End-to-end event processing
+- ? **Error Handling**: Comprehensive error scenario testing
+- ? **Health Monitoring**: System availability validation
+
+### **Future Test Enhancements**
+
+- **Performance Tests**: Load testing for high-volume scenarios
+- **Chaos Engineering**: Failure injection and recovery testing
+- **Security Tests**: Penetration testing and vulnerability scanning
+- **Contract Tests**: API contract validation between services
+- **End-to-End Browser Tests**: Complete user journey automation
+
+## ?? Event-Driven Testing Best Practices
+
+### **Asynchronous Testing Patterns**
+
+```csharp
+// Pattern 1: Fixed delay for event processing
+await Task.Delay(3000);
+
+// Pattern 2: Polling with timeout
+var timeout = TimeSpan.FromSeconds(10);
+var stopwatch = Stopwatch.StartNew();
+while (stopwatch.Elapsed < timeout)
+{
+    var product = await GetProduct(productId);
+    if (product.StockQuantity == expectedStock)
+        break;
+    await Task.Delay(500);
+}
+
+// Pattern 3: Event monitoring with correlation ID
+await WaitForEventWithCorrelationId(correlationId, timeout);
+```
+
+### **Event Test Isolation**
+
+Each event test creates isolated test data to prevent interference:
+
+```csharp
+[Fact]
+public async Task EventTest_ShouldIsolateTestData()
+{
+    // Each test creates unique products
+    var product = await CreateTestProduct($"Product-{Guid.NewGuid()}");
+    
+    // Use unique customer IDs
+    var customerId = Guid.NewGuid();
+    
+    // Verify isolation
+    // Tests run in parallel without interference
+}
+```
+
+### **Event Verification Strategies**
+
+```csharp
+// Strategy 1: State verification (most common)
+var finalProduct = await GetProduct(productId);
+Assert.Equal(expectedStock, finalProduct.StockQuantity);
+
+// Strategy 2: Event log verification
+var processedEvents = await GetProcessedEvents(orderId);
+Assert.Contains(processedEvents, e => e.EventType == "OrderConfirmedEvent");
+
+// Strategy 3: Correlation tracking
+Assert.NotNull(orderResponse.CorrelationId);
+await VerifyEventProcessedWithCorrelation(orderResponse.CorrelationId);
+```
+
+This comprehensive testing approach ensures the event-driven architecture is robust, reliable, and maintainable.

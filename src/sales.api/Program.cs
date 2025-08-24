@@ -6,10 +6,13 @@ using SalesApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using BuildingBlocks.Events.Infrastructure;
+using Rebus.Config;
+using Rebus.Routing.TypeBased;
 
 /// <summary>
 /// Main startup class for the SalesApi application.
-/// Configures services, middlewares, JWT authentication, and endpoints.
+/// Configures services, middlewares, JWT authentication, event publishing with Rebus, and endpoints.
 /// </summary>
 
 Log.Logger = new LoggerConfiguration()
@@ -36,6 +39,31 @@ builder.Services.AddDbContext<SalesDbContext>(options =>
 // Configure Inventory HTTP Client with Polly
 var inventoryApiUrl = builder.Configuration.GetValue<string>("InventoryApi:BaseUrl") ?? "http://localhost:5000/";
 builder.Services.AddInventoryClient(inventoryApiUrl);
+
+// Configure Rebus with RabbitMQ
+var rabbitMqConnectionString = builder.Configuration.GetConnectionString("RabbitMQ") ?? 
+    "amqp://admin:admin123@localhost:5672/";
+
+try
+{
+    builder.Services.AddRebus(configure => configure
+        .Transport(t => t.UseRabbitMq(rabbitMqConnectionString, "sales.api"))
+        .Options(o => 
+        {
+            o.SetNumberOfWorkers(1);
+            o.SetMaxParallelism(1);
+        }));
+
+    // Register Event Publisher
+    builder.Services.AddScoped<IEventPublisher, SalesAPI.Services.EventPublisher>();
+    
+    Log.Information("Rebus configured successfully for Sales API");
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "Failed to configure Rebus, using dummy event publisher");
+    builder.Services.AddScoped<IEventPublisher, SalesAPI.Services.DummyEventPublisher>();
+}
 
 // Configure JWT Authentication
 var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
@@ -81,5 +109,5 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHealthChecks("/health");
 
-Log.Information("Sales API starting with JWT authentication enabled");
+Log.Information("Sales API starting with JWT authentication and Rebus event publishing enabled");
 app.Run();

@@ -1,5 +1,6 @@
 using InventoryApi.Persistence;
 using InventoryApi.Models;
+using InventoryApi.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
@@ -7,10 +8,14 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using BuildingBlocks.Events.Infrastructure;
+using BuildingBlocks.Events.Domain;
+using Rebus.Config;
+using Rebus.Routing.TypeBased;
 
 /// <summary>
 /// Main startup class for the InventoryApi application.
-/// Configures services, middlewares, JWT authentication, and endpoints.
+/// Configures services, middlewares, JWT authentication, event consumption with Rebus, and endpoints.
 /// </summary>
 public class Program
 {
@@ -37,7 +42,48 @@ public class Program
 
         // Configure Entity Framework
         builder.Services.AddDbContext<InventoryDbContext>(options =>
-            Microsoft.EntityFrameworkCore.SqlServerDbContextOptionsExtensions.UseSqlServer(options, builder.Configuration.GetConnectionString("DefaultConnection") ?? "Server=localhost;Database=InventoryDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True"));
+            options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection") ?? 
+                "Server=localhost;Database=InventoryDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True"));
+
+        // Configure Rebus with RabbitMQ
+        var rabbitMqConnectionString = builder.Configuration.GetConnectionString("RabbitMQ") ?? 
+            "amqp://admin:admin123@localhost:5672/";
+
+        var rebusConfigured = false;
+
+        try
+        {
+            // Register message handlers first
+            builder.Services.AddScoped<OrderConfirmedEventHandler>();
+
+            builder.Services.AddRebus(configure => configure
+                .Transport(t => t.UseRabbitMq(rabbitMqConnectionString, "inventory.api"))
+                .Options(o => 
+                {
+                    o.SetNumberOfWorkers(1);
+                    o.SetMaxParallelism(1);
+                }));
+
+            // Register handlers automatically
+            builder.Services.AutoRegisterHandlersFromAssemblyOf<OrderConfirmedEventHandler>();
+
+            // Register Event Publisher
+            builder.Services.AddScoped<IEventPublisher, EventPublisher>();
+            
+            rebusConfigured = true;
+            Log.Information("Rebus configured successfully for Inventory API");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to configure Rebus: {Message}", ex.Message);
+        }
+
+        // Fallback to dummy implementation if Rebus not configured
+        if (!rebusConfigured)
+        {
+            Log.Information("Using dummy event publisher - events will be logged but not processed");
+            builder.Services.AddScoped<IEventPublisher, DummyEventPublisher>();
+        }
 
         // Configure JWT Authentication
         var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
@@ -83,7 +129,8 @@ public class Program
         app.MapControllers();
         app.MapHealthChecks("/health");
 
-        Log.Information("Inventory API starting with JWT authentication enabled");
+        var eventStatus = rebusConfigured ? "Rebus event consumption" : "dummy event logging";
+        Log.Information("Inventory API starting with JWT authentication and {EventStatus}", eventStatus);
         app.Run();
     }
 }
