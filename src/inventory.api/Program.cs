@@ -3,6 +3,7 @@ using InventoryApi.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
+using FluentValidation;
 
 /// <summary>
 /// Main startup class for the InventoryApi application.
