@@ -9,6 +9,7 @@ help: ## Show this help message
 	@echo "=================================="
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
+
 # Build and deployment commands
 build: ## Build all Docker images
 	@echo "?? Building all Docker images..."
@@ -38,7 +39,7 @@ reset-db: ## Reset databases (DESTRUCTIVE)
 	@echo "??  WARNING: This will destroy all data!"
 	@read -p "Are you sure? [y/N] " -n 1 -r; echo; if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
 		docker compose down -v; \
-		docker volume rm -f salesapi_sqlserver_data; \
+		docker volume rm -f $$(docker volume ls -q | grep salesapi) 2>/dev/null || true; \
 		echo "???  Database volumes removed"; \
 	fi
 
@@ -60,14 +61,14 @@ status: ## Show status of all services
 	@docker compose ps
 	@echo ""
 	@echo "?? Health Checks:"
-	@curl -s http://localhost:6000/health > /dev/null && echo "? Gateway: Healthy" || echo "? Gateway: Unhealthy"
-	@curl -s http://localhost:5000/health > /dev/null && echo "? Inventory: Healthy" || echo "? Inventory: Unhealthy"
-	@curl -s http://localhost:5001/health > /dev/null && echo "? Sales: Healthy" || echo "? Sales: Unhealthy"
+	@curl -s --max-time 5 http://localhost:6000/health > /dev/null && echo "? Gateway: Healthy" || echo "? Gateway: Unhealthy"
+	@curl -s --max-time 5 http://localhost:5000/health > /dev/null && echo "? Inventory: Healthy" || echo "? Inventory: Unhealthy"
+	@curl -s --max-time 5 http://localhost:5001/health > /dev/null && echo "? Sales: Healthy" || echo "? Sales: Unhealthy"
 
 # Testing commands
 test: ## Run integration tests (requires running services)
 	@echo "?? Running integration tests..."
-	@if ! curl -s http://localhost:6000/health > /dev/null; then \
+	@if ! curl -s --max-time 5 http://localhost:6000/health > /dev/null; then \
 		echo "? Services not running. Start with 'make up' first."; \
 		exit 1; \
 	fi
@@ -75,16 +76,20 @@ test: ## Run integration tests (requires running services)
 
 test-reservations: ## Run stock reservation tests only
 	@echo "?? Running stock reservation tests..."
-	dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "StockReservationTests" --logger "console;verbosity=detailed"
+	dotenv run dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "StockReservationTests" --logger "console;verbosity=detailed"
+
+test-events: ## Run event-driven tests only
+	@echo "?? Running event-driven tests..."
+	dotenv run dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "EventDrivenTests" --logger "console;verbosity=detailed"
 
 # Development commands
 dev: ## Start in development mode with override
 	@echo "?? Starting in development mode..."
 	docker compose -f docker-compose.yml -f docker-compose.override.yml up --build -d
 
-dev-tools: ## Start with development tools (Adminer, etc.)
-	@echo "???  Starting with development tools..."
-	docker compose --profile dev-tools up -d adminer
+observability: ## Start with observability stack
+	@echo "?? Starting with observability stack..."
+	docker compose -f docker-compose-observability-simple.yml up --build -d
 
 # Cleanup commands
 clean: ## Clean up containers, networks, and images
@@ -121,8 +126,12 @@ prod: ## Start in production mode
 backup: ## Backup databases
 	@echo "?? Creating database backup..."
 	@mkdir -p backups
-	docker compose exec sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Your_password123' -Q "BACKUP DATABASE InventoryDb TO DISK = '/tmp/inventory_backup.bak'"
-	docker compose exec sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Your_password123' -Q "BACKUP DATABASE SalesDb TO DISK = '/tmp/sales_backup.bak'"
-	docker cp salesapi-sqlserver:/tmp/inventory_backup.bak ./backups/inventory_$(shell date +%Y%m%d_%H%M%S).bak
-	docker cp salesapi-sqlserver:/tmp/sales_backup.bak ./backups/sales_$(shell date +%Y%m%d_%H%M%S).bak
-	@echo "? Backups created in ./backups/"
+	@if docker compose ps --format json | grep -q '"Service":"sqlserver".*"State":"running"'; then \
+		docker compose exec -T sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Your_password123' -Q "BACKUP DATABASE InventoryDb TO DISK = '/tmp/inventory_backup.bak'" || echo "?? Inventory backup failed"; \
+		docker compose exec -T sqlserver /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Your_password123' -Q "BACKUP DATABASE SalesDb TO DISK = '/tmp/sales_backup.bak'" || echo "?? Sales backup failed"; \
+		docker cp $$(docker compose ps -q sqlserver):/tmp/inventory_backup.bak ./backups/inventory_$$(date +%Y%m%d_%H%M%S).bak 2>/dev/null || echo "?? Could not copy inventory backup"; \
+		docker cp $$(docker compose ps -q sqlserver):/tmp/sales_backup.bak ./backups/sales_$$(date +%Y%m%d_%H%M%S).bak 2>/dev/null || echo "?? Could not copy sales backup"; \
+		echo "? Backup process completed. Check ./backups/"; \
+	else \
+		echo "? SQL Server container is not running"; \
+	fi

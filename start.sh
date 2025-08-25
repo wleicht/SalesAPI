@@ -40,8 +40,15 @@ wait_for_service() {
     
     echo "   Waiting for $service..."
     while [ $attempt -le $max_attempts ]; do
-        if docker compose ps --filter "status=running" --filter "health=healthy" | grep -q $service; then
+        # Check if container is running and healthy
+        if docker compose ps --format json | jq -r '.[] | select(.Service=="'$service'") | .Health' 2>/dev/null | grep -q "healthy"; then
             echo "   ? $service is healthy"
+            return 0
+        fi
+        
+        # Check if container is at least running (for services without health checks)
+        if docker compose ps --format json | jq -r '.[] | select(.Service=="'$service'") | .State' 2>/dev/null | grep -q "running"; then
+            echo "   ? $service is running"
             return 0
         fi
         
@@ -58,8 +65,8 @@ wait_for_service() {
 }
 
 # Wait for infrastructure services first
-wait_for_service "salesapi-sqlserver"
-wait_for_service "salesapi-rabbitmq"
+wait_for_service "sqlserver"
+wait_for_service "rabbitmq"
 
 # Apply database migrations
 echo "?? Applying database migrations..."
@@ -71,13 +78,13 @@ docker compose run --rm migration || {
     CREATE DATABASE InventoryDb;
     IF NOT EXISTS(SELECT * FROM sys.databases WHERE name = 'SalesDb')
     CREATE DATABASE SalesDb;
-    " || echo "??  Database creation attempted, continuing..."
+    " 2>/dev/null || echo "??  Database creation attempted, continuing..."
 }
 
 # Wait for application services
-wait_for_service "salesapi-inventory"
-wait_for_service "salesapi-sales" 
-wait_for_service "salesapi-gateway"
+wait_for_service "inventory"
+wait_for_service "sales" 
+wait_for_service "gateway"
 
 echo ""
 echo "?? SalesAPI is ready!"
