@@ -38,13 +38,8 @@ namespace EndpointTests
             // Arrange & Act
             var response = await _client.GetAsync("products");
 
-            // Assert - Accept OK, NotFound, or InternalServerError (database might not be configured)
-            Assert.True(
-                response.StatusCode == HttpStatusCode.OK || 
-                response.StatusCode == HttpStatusCode.NotFound ||
-                response.StatusCode == HttpStatusCode.InternalServerError,
-                $"Expected OK, NotFound or InternalServerError, but got {response.StatusCode}"
-            );
+            // Assert
+            Assert.True(response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.NotFound);
         }
 
         [Fact]
@@ -53,13 +48,8 @@ namespace EndpointTests
             // Arrange & Act
             var response = await _client.GetAsync("products?page=1&pageSize=10");
 
-            // Assert - Accept OK, NotFound, or InternalServerError (database might not be configured)
-            Assert.True(
-                response.StatusCode == HttpStatusCode.OK || 
-                response.StatusCode == HttpStatusCode.NotFound ||
-                response.StatusCode == HttpStatusCode.InternalServerError,
-                $"Expected OK, NotFound or InternalServerError, but got {response.StatusCode}"
-            );
+            // Assert
+            Assert.True(response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.NotFound);
         }
 
         [Fact]
@@ -71,32 +61,18 @@ namespace EndpointTests
             // Act
             var response = await _client.GetAsync($"products/{invalidId}");
 
-            // Assert - Accept NotFound or InternalServerError (database might not be configured)
-            Assert.True(
-                response.StatusCode == HttpStatusCode.NotFound ||
-                response.StatusCode == HttpStatusCode.InternalServerError,
-                $"Expected NotFound or InternalServerError, but got {response.StatusCode}"
-            );
+            // Assert
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         }
 
         [Fact]
         public async Task Swagger_ShouldBeAccessible()
         {
-            // Try different Swagger paths
-            var swaggerPaths = new[] { "swagger", "swagger/", "swagger/index.html" };
-            
-            foreach (var path in swaggerPaths)
-            {
-                var response = await _client.GetAsync(path);
-                if (response.StatusCode == HttpStatusCode.OK)
-                {
-                    Assert.True(true, $"Swagger found at {path}");
-                    return;
-                }
-            }
-            
-            // If none work, just warn but don't fail the test
-            Assert.True(true, "Swagger might be disabled in production mode or different path");
+            // Arrange & Act
+            var response = await _client.GetAsync("swagger/index.html");
+
+            // Assert
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
     }
 }

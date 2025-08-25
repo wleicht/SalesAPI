@@ -55,6 +55,7 @@ public class Program
         {
             // Register message handlers first
             builder.Services.AddScoped<OrderConfirmedEventHandler>();
+            builder.Services.AddScoped<OrderCancelledEventHandler>();
 
             builder.Services.AddRebus(configure => configure
                 .Transport(t => t.UseRabbitMq(rabbitMqConnectionString, "inventory.api"))
@@ -66,6 +67,7 @@ public class Program
 
             // Register handlers automatically
             builder.Services.AutoRegisterHandlersFromAssemblyOf<OrderConfirmedEventHandler>();
+            builder.Services.AutoRegisterHandlersFromAssemblyOf<OrderCancelledEventHandler>();
 
             // Register Event Publisher
             builder.Services.AddScoped<IEventPublisher, EventPublisher>();

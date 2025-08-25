@@ -82,6 +82,12 @@ namespace SalesApi.Models
         public decimal UnitPrice { get; set; }
 
         /// <summary>
+        /// Calculated total price for this line item (Quantity × UnitPrice).
+        /// Provides immediate access to the line total for calculations and validation.
+        /// </summary>
+        public decimal TotalPrice => Quantity * UnitPrice;
+
+        /// <summary>
         /// Navigation property back to the order.
         /// </summary>
         public virtual Order Order { get; set; } = null!;

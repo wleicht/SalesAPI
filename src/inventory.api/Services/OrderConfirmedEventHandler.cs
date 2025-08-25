@@ -47,23 +47,25 @@ namespace InventoryApi.Services
         }
 
         /// <summary>
-        /// Processes an OrderConfirmedEvent by debiting stock quantities for all order items.
+        /// Processes an OrderConfirmedEvent by converting stock reservations to debited status.
         /// Implements comprehensive error handling, idempotency checks, and audit trail creation.
         /// </summary>
         /// <param name="orderEvent">The order confirmed event containing order details and items to process</param>
         /// <returns>A task representing the asynchronous event processing operation</returns>
         /// <remarks>
-        /// Processing flow:
+        /// Processing flow with reservations:
         /// 1. Validates event hasn't been processed before (idempotency)
         /// 2. Begins database transaction for consistency
-        /// 3. Processes each order item:
-        ///    - Validates product exists
-        ///    - Checks sufficient stock availability
-        ///    - Records stock deduction for audit
-        ///    - Updates product stock quantity
-        /// 4. Marks event as processed to prevent reprocessing
-        /// 5. Publishes StockDebitedEvent response
-        /// 6. Commits transaction or rolls back on error
+        /// 3. Finds existing stock reservations for the order
+        /// 4. Converts reservations from Reserved to Debited status
+        /// 5. Updates product stock quantities by debiting reserved amounts
+        /// 6. Marks event as processed to prevent reprocessing
+        /// 7. Publishes StockDebitedEvent response
+        /// 8. Commits transaction or rolls back on error
+        /// 
+        /// Reservation-based processing ensures that stock has already been validated
+        /// and allocated during the synchronous reservation phase, making this
+        /// asynchronous processing more reliable and predictable.
         /// 
         /// The handler ensures that either all stock deductions succeed or none are applied,
         /// maintaining data consistency across the distributed system.
@@ -99,88 +101,125 @@ namespace InventoryApi.Services
                     return;
                 }
 
+                // Find existing stock reservations for this order
+                var stockReservations = await _dbContext.StockReservations
+                    .Where(r => r.OrderId == orderEvent.OrderId && r.Status == ReservationStatus.Reserved)
+                    .ToListAsync();
+
+                if (!stockReservations.Any())
+                {
+                    _logger.LogError(
+                        "No active stock reservations found for Order {OrderId}. Cannot process order confirmation.",
+                        orderEvent.OrderId);
+
+                    // Mark event as processed with error to prevent infinite retries
+                    var errorProcessedEvent = new ProcessedEvent
+                    {
+                        EventId = orderEvent.EventId,
+                        EventType = nameof(OrderConfirmedEvent),
+                        OrderId = orderEvent.OrderId,
+                        ProcessedAt = DateTime.UtcNow,
+                        CorrelationId = orderEvent.CorrelationId,
+                        ProcessingDetails = "No active stock reservations found for order"
+                    };
+
+                    _dbContext.ProcessedEvents.Add(errorProcessedEvent);
+                    await _dbContext.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    return;
+                }
+
                 var stockDeductions = new List<StockDeduction>();
                 bool allDeductionsSuccessful = true;
                 string? errorMessage = null;
 
-                // Process each item in the order
-                foreach (var item in orderEvent.Items)
+                _logger.LogInformation(
+                    "Found {ReservationCount} stock reservations for Order {OrderId}. Converting to debited status.",
+                    stockReservations.Count,
+                    orderEvent.OrderId);
+
+                // Process each reservation
+                foreach (var reservation in stockReservations)
                 {
                     try
                     {
                         _logger.LogInformation(
-                            "Processing stock deduction for Product {ProductId} ({ProductName}), Quantity: {Quantity}",
-                            item.ProductId,
-                            item.ProductName,
-                            item.Quantity);
+                            "Processing stock deduction for Product {ProductId} ({ProductName}), Reserved Quantity: {Quantity}",
+                            reservation.ProductId,
+                            reservation.ProductName,
+                            reservation.Quantity);
 
                         var product = await _dbContext.Products
-                            .FirstOrDefaultAsync(p => p.Id == item.ProductId);
+                            .FirstOrDefaultAsync(p => p.Id == reservation.ProductId);
 
                         if (product == null)
                         {
                             _logger.LogError(
                                 "Product {ProductId} not found during stock deduction for Order {OrderId}",
-                                item.ProductId,
+                                reservation.ProductId,
                                 orderEvent.OrderId);
 
                             allDeductionsSuccessful = false;
-                            errorMessage = $"Product {item.ProductId} not found";
+                            errorMessage = $"Product {reservation.ProductId} not found";
                             continue;
                         }
 
                         _logger.LogInformation(
-                            "Found product {ProductId}. Current stock: {CurrentStock}, Requesting: {RequestedQuantity}",
-                            item.ProductId,
+                            "Found product {ProductId}. Current stock: {CurrentStock}, Reserved quantity: {ReservedQuantity}",
+                            reservation.ProductId,
                             product.StockQuantity,
-                            item.Quantity);
+                            reservation.Quantity);
 
-                        // Check if sufficient stock is available
-                        if (product.StockQuantity < item.Quantity)
+                        // Verify we still have sufficient stock (edge case protection)
+                        if (product.StockQuantity < reservation.Quantity)
                         {
                             _logger.LogError(
-                                "Insufficient stock for Product {ProductId}. Available: {Available}, Required: {Required} for Order {OrderId}",
-                                item.ProductId,
+                                "Insufficient stock for Product {ProductId}. Available: {Available}, Reserved: {Reserved} for Order {OrderId}",
+                                reservation.ProductId,
                                 product.StockQuantity,
-                                item.Quantity,
+                                reservation.Quantity,
                                 orderEvent.OrderId);
 
                             allDeductionsSuccessful = false;
-                            errorMessage = $"Insufficient stock for product {item.ProductName}";
+                            errorMessage = $"Insufficient stock for product {reservation.ProductName}";
                             continue;
                         }
 
                         // Record stock deduction for audit
                         var stockDeduction = new StockDeduction
                         {
-                            ProductId = item.ProductId,
-                            ProductName = item.ProductName,
-                            QuantityDebited = item.Quantity,
+                            ProductId = reservation.ProductId,
+                            ProductName = reservation.ProductName,
+                            QuantityDebited = reservation.Quantity,
                             PreviousStock = product.StockQuantity,
-                            NewStock = product.StockQuantity - item.Quantity
+                            NewStock = product.StockQuantity - reservation.Quantity
                         };
 
-                        // Debit the stock
-                        product.StockQuantity -= item.Quantity;
+                        // Debit the stock and update reservation status
+                        product.StockQuantity -= reservation.Quantity;
+                        reservation.Status = ReservationStatus.Debited;
+                        reservation.ProcessedAt = DateTime.UtcNow;
+                        
                         stockDeductions.Add(stockDeduction);
 
                         _logger.LogInformation(
-                            "Stock debited for Product {ProductId} ({ProductName}). Previous: {Previous}, Debited: {Debited}, New: {New}",
-                            item.ProductId,
-                            item.ProductName,
+                            "Stock debited for Product {ProductId} ({ProductName}). Previous: {Previous}, Debited: {Debited}, New: {New}. Reservation {ReservationId} marked as Debited.",
+                            reservation.ProductId,
+                            reservation.ProductName,
                             stockDeduction.PreviousStock,
                             stockDeduction.QuantityDebited,
-                            stockDeduction.NewStock);
+                            stockDeduction.NewStock,
+                            reservation.Id);
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex,
                             "Error processing stock deduction for Product {ProductId} in Order {OrderId}",
-                            item.ProductId,
+                            reservation.ProductId,
                             orderEvent.OrderId);
 
                         allDeductionsSuccessful = false;
-                        errorMessage = $"Error processing product {item.ProductName}: {ex.Message}";
+                        errorMessage = $"Error processing product {reservation.ProductName}: {ex.Message}";
                     }
                 }
 
@@ -191,7 +230,10 @@ namespace InventoryApi.Services
                     EventType = nameof(OrderConfirmedEvent),
                     OrderId = orderEvent.OrderId,
                     ProcessedAt = DateTime.UtcNow,
-                    CorrelationId = orderEvent.CorrelationId
+                    CorrelationId = orderEvent.CorrelationId,
+                    ProcessingDetails = allDeductionsSuccessful 
+                        ? $"Successfully processed {stockDeductions.Count} stock deductions from reservations"
+                        : $"Partial processing: {stockDeductions.Count} successful, errors: {errorMessage}"
                 };
 
                 _dbContext.ProcessedEvents.Add(processedEvent);
@@ -225,7 +267,7 @@ namespace InventoryApi.Services
                 await transaction.CommitAsync();
 
                 _logger.LogInformation(
-                    "=== HANDLER COMPLETED === Successfully processed OrderConfirmedEvent for Order {OrderId}. Debited {Count} items. Success: {Success}",
+                    "=== HANDLER COMPLETED === Successfully processed OrderConfirmedEvent for Order {OrderId}. Debited {Count} items from reservations. Success: {Success}",
                     orderEvent.OrderId,
                     stockDeductions.Count,
                     allDeductionsSuccessful);

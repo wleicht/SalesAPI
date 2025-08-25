@@ -1,6 +1,6 @@
-# Endpoint Tests - Comprehensive Integration Testing Suite
+# Endpoint Tests - Comprehensive Integration Testing Suite with Stock Reservations
 
-This project contains a comprehensive integration testing suite that validates all aspects of the SalesAPI microservices architecture, including authentication, authorization, CRUD operations, service communication, event-driven architecture, and system health.
+This project contains a comprehensive integration testing suite that validates all aspects of the SalesAPI microservices architecture, including authentication, authorization, CRUD operations, service communication, event-driven architecture, **?? stock reservation system (Saga pattern)**, and system health.
 
 ## ?? Testing Philosophy
 
@@ -10,363 +10,454 @@ The testing strategy follows a **unified integration testing approach** using a 
 - **Service Integration**: Cross-service communication and data consistency
 - **Authentication & Authorization**: JWT token-based security across all services
 - **Event-Driven Architecture**: Asynchronous message processing and event flows
+- **?? Stock Reservation System**: Saga pattern implementation with compensation logic
+- **?? Overselling Prevention**: Race condition testing and atomic operations
+- **?? Payment Failure Simulation**: Realistic payment scenarios with rollback
 - **Business Logic Validation**: Core domain rules and constraints
 - **System Health**: Service availability and infrastructure readiness
 
-## ?? Test Coverage Overview
+## ?? Enhanced Test Coverage Overview
 
-### **Total Tests: 47**
+### **Total Tests: 51** ??
 
 | Test Category | Count | Description |
 |---------------|-------|-------------|
+| **?? Stock Reservation Tests** | 8 | **NEW** - Saga pattern, compensation, race conditions |
 | **Authentication Tests** | 10 | JWT token generation, validation, and role-based access |
 | **Gateway Tests** | 13 | YARP routing, health checks, and reverse proxy functionality |
 | **Product CRUD Tests** | 6 | Inventory management with admin authorization |
-| **Order CRUD Tests** | 8 | Sales operations with customer authentication |
-| **Event-Driven Tests** | 3 | ? Asynchronous event processing and stock management |
+| **Order CRUD Tests** | 8 | Sales operations enhanced with reservation integration |
+| **Event-Driven Tests** | 3 | Asynchronous event processing and stock management |
 | **API Health Tests** | 7 | Service availability and system monitoring |
 
-## ?? Event-Driven Architecture Tests
+## ?? Stock Reservation System Tests (NEW)
 
-### **EventDrivenTests.cs** ? NEW
+### **StockReservationTests.cs** - Comprehensive Saga Pattern Testing
 
-This test class validates the complete event-driven architecture implementation:
+This test class validates the complete stock reservation system implementing the Saga pattern with compensation logic:
 
-#### **Test 1: CreateOrder_ShouldPublishEventAndDebitStock**
-- **Purpose**: Validates end-to-end event-driven order processing
-- **Flow**:
-  1. Authenticate as admin and create product with initial stock
-  2. Authenticate as customer and create order
-  3. Verify `OrderConfirmedEvent` is published to RabbitMQ
-  4. Confirm automatic stock deduction via event consumption
-  5. Validate final stock quantity reflects the order
+#### **?? Test 1: CreateOrderWithReservation_ShouldProcessSuccessfully**
+**Purpose**: Validates end-to-end reservation-based order processing workflow
+
+**Complete Flow Validation**:
+1. **Setup**: Admin authentication + product creation (100 units)
+2. **Order Creation**: Customer authentication + order request (15 units)
+3. **Synchronous Reservation**: Immediate stock allocation
+4. **Payment Processing**: Simulated payment success
+5. **Event Publishing**: OrderConfirmedEvent to RabbitMQ
+6. **Asynchronous Processing**: Event consumption and stock deduction
+7. **Final Validation**: 
+   - Stock correctly debited (100 ? 85 units)
+   - Reservation status changed (Reserved ? Debited)
+   - Complete audit trail maintained
 
 ```csharp
 [Fact]
-public async Task CreateOrder_ShouldPublishEventAndDebitStock()
+public async Task CreateOrderWithReservation_ShouldProcessSuccessfully()
 {
-    // Arrange - Create product with stock
+    // Test validates complete reservation ? confirmation workflow
     var product = await CreateTestProduct(stockQuantity: 100);
+    var order = await CreateOrderWithReservation(product.Id, quantity: 15);
     
-    // Act - Create order (triggers event)
-    var order = await CreateTestOrder(product.Id, quantity: 5);
+    // Wait for asynchronous event processing
+    await Task.Delay(15000);
     
-    // Wait for event processing
-    await Task.Delay(3000);
+    // Verify stock deduction via events
+    var finalStock = await GetUpdatedStock(product.Id);
+    Assert.Equal(85, finalStock); // 100 - 15 = 85
     
-    // Assert - Stock was automatically debited
-    var updatedProduct = await GetProduct(product.Id);
-    Assert.Equal(95, updatedProduct.StockQuantity); // 100 - 5 = 95
+    // Verify reservation status transition
+    var reservations = await GetReservationsByOrder(order.Id);
+    Assert.All(reservations, r => Assert.Equal("Debited", r.Status));
 }
 ```
 
-#### **Test 2: CreateOrder_WithInsufficientStock_ShouldNotCreateOrderOrDebitStock**
-- **Purpose**: Validates error handling when stock is insufficient
-- **Flow**:
-  1. Create product with low stock (2 units)
-  2. Attempt to order more than available (10 units)
-  3. Verify order creation fails with 422 Unprocessable Entity
-  4. Confirm stock remains unchanged (no events processed)
+#### **??? Test 2: CreateOrderWithPaymentFailure_ShouldReleaseReservations**
+**Purpose**: Validates Saga compensation pattern for payment failures
+
+**Compensation Logic Testing**:
+1. **Setup**: Expensive product creation (triggers payment failure)
+2. **Reservation**: Successful stock reservation
+3. **Payment Failure**: Simulated payment processing failure  
+4. **Compensation Event**: OrderCancelledEvent publishing
+5. **Stock Release**: Automatic reservation release
+6. **Consistency**: Stock quantity remains unchanged
 
 ```csharp
 [Fact]
-public async Task CreateOrder_WithInsufficientStock_ShouldNotCreateOrderOrDebitStock()
+public async Task CreateOrderWithPaymentFailure_ShouldReleaseReservations()
 {
-    // Arrange - Create product with low stock
-    var product = await CreateTestProduct(stockQuantity: 2);
+    // Test validates compensation pattern implementation
+    var expensiveProduct = await CreateTestProduct(price: 2000.00m, stock: 50);
     
-    // Act - Try to order more than available
-    var response = await AttemptOrderCreation(product.Id, quantity: 10);
+    // Attempt order creation (triggers payment failure)
+    var response = await AttemptOrderWithPaymentFailure(expensiveProduct.Id, quantity: 3);
     
-    // Assert - Order rejected and stock unchanged
+    // Verify payment failure response
     Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     
-    var unchangedProduct = await GetProduct(product.Id);
-    Assert.Equal(2, unchangedProduct.StockQuantity); // Stock unchanged
-}
-```
-
-#### **Test 3: CreateMultipleOrders_ShouldProcessAllEventsCorrectly**
-- **Purpose**: Validates concurrent event processing and consistency
-- **Flow**:
-  1. Create product with sufficient stock (50 units)
-  2. Create multiple orders sequentially (3, 7, 2 units)
-  3. Wait for all events to be processed
-  4. Verify final stock reflects all deductions (50 - 12 = 38)
-
-```csharp
-[Fact]
-public async Task CreateMultipleOrders_ShouldProcessAllEventsCorrectly()
-{
-    // Arrange - Create product with sufficient stock
-    var product = await CreateTestProduct(stockQuantity: 50);
-    
-    // Act - Create multiple orders
-    await CreateTestOrder(product.Id, quantity: 3);
-    await CreateTestOrder(product.Id, quantity: 7);
-    await CreateTestOrder(product.Id, quantity: 2);
-    
-    // Wait for all events to be processed
+    // Wait for compensation event processing
     await Task.Delay(10000);
     
-    // Assert - All deductions applied correctly
-    var finalProduct = await GetProduct(product.Id);
-    Assert.Equal(38, finalProduct.StockQuantity); // 50 - 3 - 7 - 2 = 38
+    // Verify stock was not debited (compensation successful)
+    var unchangedStock = await GetUpdatedStock(expensiveProduct.Id);
+    Assert.Equal(50, unchangedStock); // Stock unchanged
 }
 ```
 
-## ?? Authentication Tests
+#### **????? Test 3: ConcurrentOrderCreation_ShouldPreventOverselling**
+**Purpose**: Validates race condition prevention and atomic operations
 
-### **AuthenticationTests.cs**
+**Concurrency Testing**:
+1. **Setup**: Limited stock product (20 units)
+2. **Concurrent Orders**: 4 simultaneous orders (8 units each)
+3. **Atomic Validation**: Only valid orders accepted (max 2 orders)
+4. **Overselling Prevention**: Total allocation ? available stock
+5. **Consistency**: Final stock reflects only successful orders
 
-Comprehensive JWT authentication and authorization testing:
-
-#### Core Authentication Features
-- **Token Generation**: Validates JWT token creation with valid credentials
-- **Token Validation**: Ensures invalid/expired tokens are rejected
-- **Role-Based Access**: Verifies admin/customer role enforcement
-- **Open Access**: Confirms public endpoints work without authentication
-
-#### Key Test Cases
 ```csharp
 [Fact]
-public async Task GenerateToken_WithValidCredentials_ShouldReturnJwtToken()
-
-[Fact]
-public async Task AccessProtectedEndpoint_WithValidToken_ShouldSucceed()
-
-[Fact]
-public async Task AccessProtectedEndpoint_WithoutToken_ShouldReturn401()
-
-[Fact]
-public async Task AccessAdminEndpoint_WithCustomerToken_ShouldReturn403()
+public async Task ConcurrentOrderCreation_ShouldPreventOverselling()
+{
+    // Test validates atomic reservation operations
+    var limitedProduct = await CreateTestProduct(stockQuantity: 20);
+    
+    // Launch 4 concurrent orders of 8 units each
+    var orderTasks = CreateConcurrentOrders(limitedProduct.Id, quantity: 8, count: 4);
+    var results = await Task.WhenAll(orderTasks);
+    
+    var successfulOrders = results.Count(r => r.Success);
+    
+    // Only 2 orders should succeed (2 × 8 = 16 ? 20)
+    Assert.True(successfulOrders <= 2, "Overselling prevented");
+    Assert.True(successfulOrders >= 1, "At least one order succeeded");
+    
+    // Verify final stock consistency
+    var expectedStock = 20 - (successfulOrders * 8);
+    var actualStock = await GetUpdatedStock(limitedProduct.Id);
+    Assert.Equal(expectedStock, actualStock);
+}
 ```
 
-## ?? Gateway Tests
+#### **?? Test 4: StockReservationApi_ShouldWorkCorrectly**
+**Purpose**: Validates direct stock reservation API endpoints
 
-### **GatewayApiTests.cs** & **GatewayRoutingTests.cs**
+**API Endpoint Testing**:
+1. **Direct Reservation**: POST `/api/stockreservations`
+2. **Response Validation**: Reservation details and status
+3. **Query by Order**: GET `/api/stockreservations/order/{orderId}`
+4. **Specific Retrieval**: GET `/api/stockreservations/{reservationId}`
+5. **Data Integrity**: Complete reservation information
 
-Tests for YARP reverse proxy and routing functionality:
-
-#### Gateway Features Tested
-- **Service Health**: Gateway health endpoint availability
-- **Route Configuration**: Dynamic route discovery and configuration
-- **Backend Routing**: Request forwarding to appropriate services
-- **Error Handling**: Graceful handling of backend service failures
-
-#### Key Test Cases
 ```csharp
 [Fact]
-public async Task GetHealth_ShouldReturnHealthy()
-
-[Fact]
-public async Task GetRoutes_ShouldReturnConfiguredRoutes()
-
-[Fact]
-public async Task RouteToInventory_ShouldForwardToInventoryService()
-
-[Fact]
-public async Task RouteToSales_ShouldForwardToSalesService()
+public async Task StockReservationApi_ShouldWorkCorrectly()
+{
+    // Test validates direct API endpoint functionality
+    var product = await CreateTestProduct(stockQuantity: 30);
+    
+    // Create reservation directly via API
+    var reservationRequest = CreateReservationRequest(product.Id, quantity: 5);
+    var response = await PostReservation(reservationRequest);
+    
+    // Validate successful creation (201 Created)
+    Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    
+    // Verify reservation details
+    var reservationData = await ParseReservationResponse(response);
+    Assert.True(reservationData.Success);
+    Assert.Equal(5, reservationData.RequestedQuantity);
+    
+    // Test query endpoints
+    var orderReservations = await GetReservationsByOrder(reservationRequest.OrderId);
+    Assert.Single(orderReservations);
+    Assert.Equal("Reserved", orderReservations[0].Status);
+}
 ```
 
-## ?? Product CRUD Tests
+### **SimpleReservationTests.cs** - Basic Connectivity & Diagnostics
 
-### **ProductCrudTests.cs** & **InventoryApiTests.cs**
+This test class provides basic validation and troubleshooting capabilities:
 
-Comprehensive testing of inventory management functionality:
+#### **?? Connectivity Tests**
+- `InventoryApi_ShouldBeResponding` - Basic API availability
+- `Authentication_ShouldWork` - JWT token generation  
+- `CreateProduct_ShouldWork` - Product creation capability
+- `StockReservationEndpoint_ShouldBeAccessible` - Reservation API accessibility
 
-#### Features Tested
-- **Admin Authorization**: Product creation/update requires admin role
-- **Open Access**: Product reading available without authentication
-- **Data Validation**: Input validation and error handling
-- **Business Rules**: Price and stock quantity constraints
-
-#### Key Test Cases
 ```csharp
 [Fact]
-public async Task CreateProduct_WithAdminToken_ShouldCreateProduct()
-
-[Fact]
-public async Task CreateProduct_WithoutToken_ShouldReturn401()
-
-[Fact]
-public async Task GetProducts_WithoutAuthentication_ShouldReturnProducts()
-
-[Fact]
-public async Task UpdateProduct_WithAdminToken_ShouldUpdateProduct()
+public async Task StockReservationEndpoint_ShouldBeAccessible()
+{
+    // Validates reservation endpoint is reachable and configured correctly
+    var token = await GetAdminToken();
+    var response = await TestReservationEndpoint(token);
+    
+    // Should return 404 (NotFound) or 200 (OK), not 500 (ServerError)
+    Assert.True(response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound);
+}
 ```
 
-## ?? Order CRUD Tests
+## ?? Enhanced Event-Driven Architecture Tests
 
-### **OrderCrudTests.cs** & **SalesApiTests.cs**
+### **EventDrivenTests.cs** - Updated with Reservation Integration
 
-Testing of sales operations and order management:
+This test class validates the complete event-driven architecture implementation **enhanced with stock reservations**:
 
-#### Features Tested
-- **Customer Authorization**: Order creation requires customer/admin role
-- **Stock Validation**: Real-time inventory checking via HTTP
-- **Order Processing**: Complete order workflow with business logic
-- **Price Freezing**: Unit prices captured at order time
+#### **Test 1: CreateOrder_ShouldPublishEventAndDebitStock** (Enhanced)
+- **Purpose**: Validates end-to-end event-driven order processing **with reservations**
+- **New Features**: 
+  - ? Synchronous reservation creation before event publishing
+  - ? Enhanced OrderConfirmedEvent with reservation correlation
+  - ? Reservation status transitions (Reserved ? Debited)
 
-#### Key Test Cases
+#### **Test 2: CreateOrder_WithInsufficientStock_ShouldNotCreateOrderOrDebitStock** (Enhanced)
+- **Purpose**: Validates error handling **with reservation prevention**
+- **New Features**:
+  - ? Reservation-level stock validation
+  - ? No orphaned reservations created
+  - ? Enhanced error messages with stock details
+
+#### **Test 3: CreateMultipleOrders_ShouldProcessAllEventsCorrectly** (Enhanced)
+- **Purpose**: Validates concurrent event processing **with reservation coordination**
+- **New Features**:
+  - ? Reservation-based concurrency control
+  - ? Sequential reservation processing
+  - ? Enhanced consistency validation
+
+## ??? Stock Reservation Test Utilities
+
+### **Reservation-Specific Test Helpers**
+
 ```csharp
-[Fact]
-public async Task CreateOrder_WithValidCustomerToken_ShouldCreateOrder()
+// Stock reservation creation
+protected async Task<StockReservationResponse> CreateReservation(
+    Guid productId, 
+    int quantity, 
+    string correlationId = null)
 
-[Fact]
-public async Task CreateOrder_WithInsufficientStock_ShouldReturnError()
+// Reservation status validation
+protected async Task<List<StockReservation>> GetReservationsByOrder(Guid orderId)
 
-[Fact]
-public async Task GetOrders_WithoutAuthentication_ShouldReturnOrders()
+// Stock consistency verification
+protected async Task ValidateStockConsistency(
+    Guid productId, 
+    int expectedStock, 
+    int expectedReserved = 0)
 
-[Fact]
-public async Task CreateOrder_ShouldValidateStockAvailability()
+// Payment failure simulation
+protected async Task<HttpResponseMessage> SimulatePaymentFailure(
+    Guid productId, 
+    int quantity, 
+    decimal highPrice = 2000.00m)
+
+// Concurrent order testing
+protected async Task<OrderResult[]> CreateConcurrentOrders(
+    Guid productId, 
+    int quantity, 
+    int orderCount)
 ```
 
-## ?? API Health Tests
+### **Enhanced Event Testing with Reservations**
 
-Health monitoring and service availability testing across all services:
+```csharp
+// Wait for reservation + event processing
+protected async Task WaitForReservationProcessing(int milliseconds = 15000)
 
-#### Features Tested
-- **Service Health**: Individual service health endpoints
-- **Gateway Health**: Unified health checking through gateway
-- **Infrastructure**: Database and external dependency health
-- **Swagger Documentation**: API documentation availability
+// Verify reservation status transitions
+protected async Task VerifyReservationStatusChange(
+    Guid orderId, 
+    ReservationStatus expectedStatus)
 
-## ?? Running the Tests
+// Validate compensation events
+protected async Task VerifyCompensationProcessing(
+    Guid orderId, 
+    string expectedReason)
+```
 
-### **Prerequisites**
+## ????? Running Enhanced Tests
 
-Before running tests, ensure all services are running:
+### **Prerequisites for Stock Reservation Tests**
+
+Before running reservation tests, ensure all services are running with **RabbitMQ** for event processing:
 
 ```bash
-# Start infrastructure services
+# Start infrastructure services (CRITICAL for reservation tests)
 docker-compose -f docker-compose.infrastructure.yml up -d
+
+# Verify RabbitMQ is accessible (required for events)
+curl -u admin:admin123 http://localhost:15672/api/overview
 
 # Start all microservices
 dotnet run --project src/inventory.api --urls "http://localhost:5000" &
 dotnet run --project src/sales.api --urls "http://localhost:5001" &
 dotnet run --project src/gateway --urls "http://localhost:6000" &
+
+# Wait for service initialization (IMPORTANT for reservation sync)
+sleep 20
 ```
 
-### **Run All Tests**
+### **Run Stock Reservation Tests** ??
+
 ```bash
-# Execute all 47 tests
+# Run all stock reservation tests (8 tests)
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "StockReservationTests"
+
+# Run with detailed output to see reservation flow
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "StockReservationTests" --logger "console;verbosity=detailed"
+
+# Run specific reservation scenarios
+dotnet test --filter "CreateOrderWithReservation_ShouldProcessSuccessfully"
+dotnet test --filter "CreateOrderWithPaymentFailure_ShouldReleaseReservations"
+dotnet test --filter "ConcurrentOrderCreation_ShouldPreventOverselling"
+dotnet test --filter "StockReservationApi_ShouldWorkCorrectly"
+
+# Basic connectivity tests
+dotnet test --filter "SimpleReservationTests"
+```
+
+### **Run All Enhanced Tests (51 Tests)**
+```bash
+# Execute all tests including reservations
 dotnet test tests/endpoint.tests/endpoint.tests.csproj
 
-# Run with detailed output
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger "console;verbosity=normal"
+# Run with coverage and detailed output
+dotnet test tests/endpoint.tests/endpoint.tests.csproj \
+  --logger "console;verbosity=normal" \
+  --collect:"XPlat Code Coverage"
 ```
 
-### **Run Specific Test Categories**
+### **Enhanced Test Categories**
 
 ```bash
-# Event-driven architecture tests (NEW)
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "EventDrivenTests"
+# ?? Stock reservation system tests (8 tests)
+dotnet test --filter "StockReservationTests OR SimpleReservationTests"
+
+# Event-driven architecture tests (enhanced with reservations)
+dotnet test --filter "EventDrivenTests"
 
 # Authentication and security tests
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "AuthenticationTests"
+dotnet test --filter "AuthenticationTests"
 
-# Gateway and routing tests
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "Gateway"
+# Gateway and routing tests  
+dotnet test --filter "Gateway"
 
 # Product management tests
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "ProductCrudTests"
+dotnet test --filter "ProductCrudTests"
 
-# Order processing tests
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "OrderCrudTests"
+# Order processing tests (enhanced with reservations)
+dotnet test --filter "OrderCrudTests"
 
 # Service health tests
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "Health"
+dotnet test --filter "Health"
 ```
 
-### **Run Tests with Coverage**
-```bash
-# Install coverage tools
-dotnet tool install --global dotnet-reportgenerator-globaltool
+## ?? Enhanced Test Execution Timeline
 
-# Run tests with coverage
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --collect:"XPlat Code Coverage"
+### **Stock Reservation Test Performance**
 
-# Generate coverage report
-reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coverage-report" -reporttypes:Html
-```
+| Test Category | Execution Time | Reason for Duration |
+|---------------|----------------|---------------------|
+| **?? Reservation Tests** | **15-20 seconds** | **Async event processing + payment simulation** |
+| **Event-Driven** | 15-20 seconds | Message broker processing delays |
+| **Authentication** | 2-3 seconds | Fast token validation |
+| **Gateway** | 3-4 seconds | Network routing verification |
+| **Product CRUD** | 4-5 seconds | Database operations |
+| **Order CRUD** | 5-6 seconds | Cross-service communication |
+| **Health Checks** | 1-2 seconds | Simple endpoint validation |
 
-## ?? Test Configuration
+**Total Enhanced Execution Time**: **~45-55 seconds for all 51 tests**
 
-### **Test Base Classes**
-
-The tests use shared base classes for common functionality:
+### **?? Stock Reservation Test Timing Breakdown**
 
 ```csharp
-public class BaseIntegrationTest
-{
-    protected readonly HttpClient _gatewayClient;
-    protected readonly HttpClient _inventoryClient;
-    protected readonly HttpClient _salesClient;
-    
-    protected async Task<string?> GetAuthTokenAsync(string username, string password)
-    protected async Task<T> GetAsync<T>(string endpoint)
-    protected async Task<HttpResponseMessage> PostAsync<T>(string endpoint, T data)
-}
+// Reservation creation (synchronous): ~100-200ms
+var reservation = await CreateReservation(productId, quantity);
+
+// Payment processing simulation: ~100ms  
+var paymentResult = await SimulatePayment(orderAmount);
+
+// Event publishing: ~50ms
+await PublishOrderConfirmedEvent(order);
+
+// Event processing wait (asynchronous): ~15 seconds
+await Task.Delay(15000); // Required for RabbitMQ + DB operations
+
+// Final validation: ~100ms
+var finalState = await ValidateOrderAndStock(orderId, productId);
 ```
 
-### **Test Data Management**
+### **Timing Considerations for Reservation Tests**
 
-Each test creates its own isolated test data:
+1. **Synchronous Operations** (fast):
+   - Stock reservation creation
+   - Payment simulation
+   - Initial validation
 
-```csharp
-protected async Task<ProductDto> CreateTestProduct(
-    string name = "Test Product",
-    decimal price = 99.99m,
-    int stockQuantity = 100)
+2. **Asynchronous Operations** (require wait time):
+   - RabbitMQ message delivery
+   - Event handler processing  
+   - Database transaction completion
+   - Stock deduction/release
 
-protected async Task<OrderDto> CreateTestOrder(
-    Guid productId,
-    int quantity,
-    string customerRole = "customer1")
+3. **Concurrency Tests** (special timing):
+   - Multiple simultaneous requests
+   - Atomic operation validation
+   - Race condition prevention testing
+
+## ?? Enhanced Troubleshooting with Stock Reservations
+
+### **Common Stock Reservation Test Failures** ??
+
+#### **Reservation Creation Failures**
 ```
-
-### **Event Testing Utilities**
-
-Specialized utilities for event-driven testing:
-
-```csharp
-protected async Task WaitForEventProcessing(int milliseconds = 3000)
-protected async Task VerifyStockDeduction(Guid productId, int expectedStock)
-protected async Task VerifyOrderEventPublished(Guid orderId)
+Error: Assert.Equal() Failure - Expected: Created, Actual: OK
 ```
+**Solution**: 
+1. Check StockReservationsController endpoint configuration
+2. Verify return status codes (should be 201 Created, not 200 OK)
+3. Ensure proper HTTP method routing
 
-## ?? Test Execution Timeline
-
-### **Typical Test Run Performance**
-
-| Test Category | Execution Time | Description |
-|---------------|----------------|-------------|
-| **Authentication** | ~2-3 seconds | Fast token validation tests |
-| **Gateway** | ~3-4 seconds | Network routing verification |
-| **Product CRUD** | ~4-5 seconds | Database operations |
-| **Order CRUD** | ~5-6 seconds | Cross-service communication |
-| **Event-Driven** | ~15-20 seconds | ? Asynchronous processing wait times |
-| **Health Checks** | ~1-2 seconds | Simple endpoint validation |
-
-**Total Execution Time**: ~30-40 seconds for all 47 tests
-
-### **Event-Driven Test Timing**
-
-Event-driven tests require additional wait time for asynchronous processing:
-
-```csharp
-// Wait for event processing
-await Task.Delay(3000);  // Single event processing
-await Task.Delay(10000); // Multiple concurrent events
+#### **Event Processing Timeouts** ??
 ```
+Error: Expected stock 85, but was 100 - reservation not processed
+```
+**Solution**:
+1. Verify RabbitMQ is running: `docker ps | grep rabbitmq`
+2. Check RabbitMQ management UI: http://localhost:15672
+3. Increase wait time in tests: `await Task.Delay(20000);`
+4. Check service logs for event processing errors
+5. Verify event handlers are registered correctly
 
-This ensures events are fully processed before assertions are made.
+#### **Payment Simulation Issues** ??
+```
+Error: Payment succeeded unexpectedly - should have failed
+```
+**Solution**:
+1. Check payment simulation logic in OrdersController
+2. Verify expensive product pricing (use ? $2000 for failures)
+3. Review payment failure probability settings
+4. Test multiple attempts for probabilistic failures
 
-## ?? Troubleshooting Tests
+#### **Concurrency Test Failures** ??
+```
+Error: Too many orders succeeded - expected max 2, got 4
+```
+**Solution**:
+1. Verify atomic reservation operations
+2. Check database transaction isolation levels
+3. Ensure proper stock validation logic
+4. Review concurrent access patterns
 
-### **Common Test Failures**
+#### **Compensation Logic Issues** ??
+```
+Error: Stock not released after payment failure
+```
+**Solution**:
+1. Verify OrderCancelledEvent is published
+2. Check OrderCancelledEventHandler registration
+3. Ensure compensation logic is working
+4. Validate reservation status transitions
 
 #### **Services Not Running**
 ```
@@ -378,9 +469,9 @@ Error: Connection refused to localhost:5000
 ```
 Error: Unable to connect to SQL Server
 ```
-**Solution**: Verify SQL Server container is running and connection strings are correct
+**Solution**: Verify SQL Server container is running and migrations applied
 
-#### **RabbitMQ Connection Failures** ?
+#### **RabbitMQ Connection Failures**
 ```
 Error: Event-driven tests failing - stock not debited
 ```
@@ -389,143 +480,253 @@ Error: Event-driven tests failing - stock not debited
 2. Verify RabbitMQ management UI: http://localhost:15672
 3. Check service logs for event processing errors
 
-#### **Authentication Token Expiry**
-```
-Error: 401 Unauthorized during test execution
-```
-**Solution**: Tests automatically generate fresh tokens, but verify JWT configuration
-
-#### **Event Processing Timeout** ?
-```
-Error: Expected stock 95, but was 100
-```
-**Solution**: 
-1. Increase wait time in event tests
-2. Check event handler logs for processing errors
-3. Verify event publishing is working correctly
-
-### **Test Environment Setup**
+### **?? Enhanced Test Environment Setup for Reservations**
 
 ```bash
-# Verify all services are healthy
+# 1. Start infrastructure with proper timing
+docker-compose -f docker-compose.infrastructure.yml up -d
+sleep 30  # Wait for containers to be fully ready
+
+# 2. Verify RabbitMQ is accessible (CRITICAL for reservations)
+curl -u admin:admin123 http://localhost:15672/api/overview
+
+# 3. Apply database migrations (includes StockReservations table)
+dotnet ef database update --project src/inventory.api
+dotnet ef database update --project src/sales.api
+
+# 4. Start services with proper dependencies
+dotnet run --project src/inventory.api --urls "http://localhost:5000" &
+sleep 5  # Let inventory start first
+dotnet run --project src/sales.api --urls "http://localhost:5001" &  
+sleep 5  # Let sales start second
+dotnet run --project src/gateway --urls "http://localhost:6000" &
+sleep 10  # Let all services stabilize
+
+# 5. Verify all services are healthy
 curl http://localhost:6000/health
 curl http://localhost:5000/health  
 curl http://localhost:5001/health
 
-# Check RabbitMQ is accessible
-curl -u admin:admin123 http://localhost:15672/api/overview
+# 6. Test basic reservation functionality
+curl -X POST "http://localhost:6000/auth/token" \
+  -H "Content-Type: application/json" \
+  -d '{"Username":"admin","Password":"admin123"}'
 
-# Verify databases are accessible
-dotnet ef database update --project src/inventory.api
-dotnet ef database update --project src/sales.api
+# 7. Run reservation tests
+dotnet test tests/endpoint.tests/endpoint.tests.csproj --filter "StockReservationTests"
 ```
 
-## ?? Test Metrics & Reporting
-
-### **Test Result Analysis**
-
-Monitor test execution with these metrics:
+### **?? Stock Reservation Test Data Verification**
 
 ```bash
-# Test execution summary
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger trx
+# Check stock reservations table
+sqlcmd -S localhost -U sa -P Your_password123 -Q "
+USE InventoryDb; 
+SELECT TOP 10 * FROM StockReservations ORDER BY ReservedAt DESC;
+"
 
-# Performance profiling
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger "console;verbosity=diagnostic"
+# Check processed events
+sqlcmd -S localhost -U sa -P Your_password123 -Q "
+USE InventoryDb; 
+SELECT TOP 10 * FROM ProcessedEvents ORDER BY ProcessedAt DESC;
+"
 
-# Test result reporting
-dotnet test tests/endpoint.tests/endpoint.tests.csproj --results-directory "test-results"
+# Monitor RabbitMQ queues
+curl -u admin:admin123 http://localhost:15672/api/queues
+
+# Check queue message counts
+curl -u admin:admin123 http://localhost:15672/api/queues/%2F/inventory.api
+curl -u admin:admin123 http://localhost:15672/api/queues/%2F/sales.api
 ```
 
-### **Continuous Integration**
+## ?? Enhanced Test Metrics & Reporting
 
-The tests are designed for CI/CD pipeline integration:
+### **?? Stock Reservation Test Coverage Metrics**
+
+```bash
+# Run reservation tests with coverage
+dotnet test tests/endpoint.tests/endpoint.tests.csproj \
+  --filter "StockReservationTests" \
+  --collect:"XPlat Code Coverage" \
+  --results-directory "reservation-test-results"
+
+# Generate detailed coverage report
+reportgenerator \
+  -reports:"reservation-test-results/**/coverage.cobertura.xml" \
+  -targetdir:"reservation-coverage-report" \
+  -reporttypes:Html
+
+# View coverage report
+open reservation-coverage-report/index.html
+```
+
+### **?? Reservation Test Result Analysis**
+
+Monitor stock reservation test execution with these enhanced metrics:
+
+```bash
+# Detailed reservation test execution
+dotnet test tests/endpoint.tests/endpoint.tests.csproj \
+  --filter "StockReservationTests" \
+  --logger "console;verbosity=diagnostic" \
+  --logger "trx;LogFileName=reservation-results.trx"
+
+# Performance profiling for reservation operations  
+dotnet test tests/endpoint.tests/endpoint.tests.csproj \
+  --filter "StockReservationTests" \
+  --logger "console;verbosity=detailed" \
+  --diag:reservation-diagnostics.log
+```
+
+### **?? Continuous Integration with Stock Reservations**
+
+Enhanced CI/CD pipeline configuration for reservation testing:
 
 ```yaml
 # Example GitHub Actions configuration
-- name: Run Integration Tests
-  run: |
-    docker-compose -f docker-compose.infrastructure.yml up -d
-    sleep 30  # Wait for services to start
-    dotnet test tests/endpoint.tests/endpoint.tests.csproj --logger trx
+name: Integration Tests with Stock Reservations
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        ports:
+          - 5672:5672
+          - 15672:15672
+        env:
+          RABBITMQ_DEFAULT_USER: admin
+          RABBITMQ_DEFAULT_PASS: admin123
+      
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        ports:
+          - 1433:1433
+        env:
+          SA_PASSWORD: Your_password123
+          ACCEPT_EULA: Y
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Wait for services
+      run: |
+        sleep 60  # Extended wait for SQL Server + RabbitMQ
+        curl --retry 10 --retry-delay 5 http://localhost:15672
+
+    - name: Apply database migrations
+      run: |
+        dotnet ef database update --project src/inventory.api
+        dotnet ef database update --project src/sales.api
+
+    - name: Start microservices
+      run: |
+        dotnet run --project src/inventory.api --urls "http://localhost:5000" &
+        dotnet run --project src/sales.api --urls "http://localhost:5001" &
+        dotnet run --project src/gateway --urls "http://localhost:6000" &
+        sleep 30  # Wait for all services to start
+
+    - name: Run all tests including reservations
+      run: |
+        dotnet test tests/endpoint.tests/endpoint.tests.csproj \
+          --logger trx \
+          --logger "console;verbosity=normal" \
+          --results-directory "test-results"
+
+    - name: Run reservation-specific tests
+      run: |
+        dotnet test tests/endpoint.tests/endpoint.tests.csproj \
+          --filter "StockReservationTests" \
+          --logger "console;verbosity=detailed"
 ```
 
-## ?? Test Coverage Goals
+## ?? Enhanced Test Coverage Goals
 
-### **Current Coverage: 47 Tests**
+### **Current Enhanced Coverage: 51 Tests** ??
 
+- ? **?? Stock Reservations**: Complete Saga pattern workflow coverage
+- ? **?? Compensation Logic**: OrderCancelledEvent and rollback testing
+- ? **?? Concurrency Control**: Race condition prevention validation
+- ? **?? Payment Simulation**: Realistic failure scenarios
 - ? **Authentication**: Complete JWT workflow coverage
 - ? **Authorization**: Role-based access control validation
 - ? **CRUD Operations**: Full business logic testing
 - ? **Service Integration**: Cross-service communication
-- ? **Event-Driven Architecture**: ? End-to-end event processing
+- ? **Event-Driven Architecture**: End-to-end event processing
 - ? **Error Handling**: Comprehensive error scenario testing
 - ? **Health Monitoring**: System availability validation
 
-### **Future Test Enhancements**
+### **?? Stock Reservation Testing Best Practices**
 
-- **Performance Tests**: Load testing for high-volume scenarios
-- **Chaos Engineering**: Failure injection and recovery testing
-- **Security Tests**: Penetration testing and vulnerability scanning
-- **Contract Tests**: API contract validation between services
-- **End-to-End Browser Tests**: Complete user journey automation
-
-## ?? Event-Driven Testing Best Practices
-
-### **Asynchronous Testing Patterns**
+#### **Asynchronous Testing Patterns for Reservations**
 
 ```csharp
-// Pattern 1: Fixed delay for event processing
-await Task.Delay(3000);
+// Pattern 1: Fixed delay for reservation + event processing
+await Task.Delay(15000);  // Sufficient for reservation ? event ? processing
 
-// Pattern 2: Polling with timeout
-var timeout = TimeSpan.FromSeconds(10);
+// Pattern 2: Polling with timeout for reservation status
+var timeout = TimeSpan.FromSeconds(20);
 var stopwatch = Stopwatch.StartNew();
 while (stopwatch.Elapsed < timeout)
 {
-    var product = await GetProduct(productId);
-    if (product.StockQuantity == expectedStock)
+    var reservations = await GetReservationsByOrder(orderId);
+    if (reservations.All(r => r.Status == ReservationStatus.Debited))
         break;
-    await Task.Delay(500);
+    await Task.Delay(1000);
 }
 
-// Pattern 3: Event monitoring with correlation ID
-await WaitForEventWithCorrelationId(correlationId, timeout);
+// Pattern 3: Correlation-based event monitoring
+await WaitForReservationEventWithCorrelationId(correlationId, timeout);
 ```
 
-### **Event Test Isolation**
-
-Each event test creates isolated test data to prevent interference:
+#### **?? Reservation Test Isolation**
 
 ```csharp
 [Fact]
-public async Task EventTest_ShouldIsolateTestData()
+public async Task ReservationTest_ShouldIsolateTestData()
 {
-    // Each test creates unique products
-    var product = await CreateTestProduct($"Product-{Guid.NewGuid()}");
+    // Each test creates unique products to prevent interference
+    var product = await CreateTestProduct($"ReservationProduct-{Guid.NewGuid()}");
     
-    // Use unique customer IDs
-    var customerId = Guid.NewGuid();
+    // Use unique order IDs for reservations
+    var orderId = Guid.NewGuid();
     
-    // Verify isolation
-    // Tests run in parallel without interference
+    // Use unique correlation IDs for tracing
+    var correlationId = $"test-{Guid.NewGuid()}";
+    
+    // Verify complete isolation - tests run in parallel safely
 }
 ```
 
-### **Event Verification Strategies**
+#### **?? Stock Reservation Verification Strategies**
 
 ```csharp
-// Strategy 1: State verification (most common)
+// Strategy 1: State verification (most reliable)
 var finalProduct = await GetProduct(productId);
+var reservations = await GetReservationsByOrder(orderId);
 Assert.Equal(expectedStock, finalProduct.StockQuantity);
+Assert.All(reservations, r => Assert.Equal(expectedStatus, r.Status));
 
-// Strategy 2: Event log verification
+// Strategy 2: Event audit verification  
 var processedEvents = await GetProcessedEvents(orderId);
 Assert.Contains(processedEvents, e => e.EventType == "OrderConfirmedEvent");
+Assert.Contains(processedEvents, e => e.EventType == "OrderCancelledEvent");
 
 // Strategy 3: Correlation tracking
 Assert.NotNull(orderResponse.CorrelationId);
-await VerifyEventProcessedWithCorrelation(orderResponse.CorrelationId);
+await VerifyReservationProcessedWithCorrelation(orderResponse.CorrelationId);
+
+// Strategy 4: Compensation verification
+var cancelledEvents = await GetCancelledEvents(orderId);
+Assert.True(cancelledEvents.Any(e => e.CancellationReason.Contains("Payment")));
 ```
 
-This comprehensive testing approach ensures the event-driven architecture is robust, reliable, and maintainable.
+This comprehensive testing approach ensures the stock reservation system with Saga pattern is robust, reliable, and maintainable in production environments.

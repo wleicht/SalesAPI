@@ -15,6 +15,15 @@ namespace SalesApi.Services
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>Product details if found, null otherwise.</returns>
         Task<ProductDto?> GetProductByIdAsync(Guid productId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Gets product details by product ID from the Inventory API.
+        /// Alias for GetProductByIdAsync for backward compatibility.
+        /// </summary>
+        /// <param name="productId">The product identifier.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>Product details if found, null otherwise.</returns>
+        Task<ProductDto?> GetProductAsync(Guid productId, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
@@ -38,6 +47,12 @@ namespace SalesApi.Services
 
         /// <inheritdoc />
         public async Task<ProductDto?> GetProductByIdAsync(Guid productId, CancellationToken cancellationToken = default)
+        {
+            return await GetProductAsync(productId, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public async Task<ProductDto?> GetProductAsync(Guid productId, CancellationToken cancellationToken = default)
         {
             const int maxRetries = 3;
             var delay = TimeSpan.FromSeconds(1);

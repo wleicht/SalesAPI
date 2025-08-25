@@ -36,9 +36,18 @@ builder.Services.AddDbContext<SalesDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection") ?? 
         "Server=localhost;Database=SalesDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True"));
 
-// Configure Inventory HTTP Client with Polly
-var inventoryApiUrl = builder.Configuration.GetValue<string>("InventoryApi:BaseUrl") ?? "http://localhost:5000/";
-builder.Services.AddInventoryClient(inventoryApiUrl);
+// Configure HTTP clients
+builder.Services.AddHttpClient<SalesApi.Services.IInventoryClient, SalesApi.Services.InventoryClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["InventoryApi:BaseUrl"] ?? "http://localhost:5000/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+builder.Services.AddHttpClient<SalesAPI.Services.StockReservationClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["InventoryApi:BaseUrl"] ?? "http://localhost:5000/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
 
 // Configure Rebus with RabbitMQ
 var rabbitMqConnectionString = builder.Configuration.GetConnectionString("RabbitMQ") ?? 
