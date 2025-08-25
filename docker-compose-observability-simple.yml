@@ -11,6 +11,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Server=host.docker.internal;Database=InventoryDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True
+      - ConnectionStrings__RabbitMQ=amqp://admin:admin123@host.docker.internal:5672/
       - Jwt__Key=ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!
       - Jwt__Issuer=SalesAPI-Gateway
       - Jwt__Audience=SalesAPI-Services
@@ -20,6 +21,12 @@ services:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   sales:
     build:
@@ -33,6 +40,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Server=host.docker.internal;Database=SalesDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True
+      - ConnectionStrings__RabbitMQ=amqp://admin:admin123@host.docker.internal:5672/
       - Services__InventoryApi=http://inventory:8080
       - Jwt__Key=ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!
       - Jwt__Issuer=SalesAPI-Gateway
@@ -43,6 +51,12 @@ services:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   gateway:
     build:
@@ -65,7 +79,40 @@ services:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Include Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: salesapi-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - salesapi-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
   salesapi-network:
     driver: bridge
+
+volumes:
+  prometheus_data:

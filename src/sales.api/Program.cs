@@ -9,10 +9,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Prometheus;
+using Rebus.ServiceProvider;
+using Rebus.Config;
+using Rebus.RabbitMq;
 
 /// <summary>
-/// Main startup class for the Sales API with basic observability.
-/// Configures database, authentication, HTTP clients, health checks, 
+/// Main startup class for the Sales API with basic observability and event-driven architecture.
+/// Configures database, authentication, HTTP clients, health checks, RabbitMQ event publishing,
 /// structured logging, correlation IDs, and Prometheus metrics.
 /// </summary>
 
@@ -21,6 +24,7 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Rebus", Serilog.Events.LogEventLevel.Information)
     .Enrich.FromLogContext()
     .Enrich.WithCorrelationIdHeader("X-Correlation-Id")
     .Enrich.WithProperty("ServiceName", "Sales")
@@ -30,7 +34,7 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Information("?? Starting Sales API service with basic observability");
+    Log.Information("?? Starting Sales API service with basic observability and event publishing");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -40,6 +44,7 @@ try
         .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
         .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
         .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+        .MinimumLevel.Override("Rebus", Serilog.Events.LogEventLevel.Information)
         .Enrich.FromLogContext()
         .Enrich.WithCorrelationIdHeader("X-Correlation-Id")
         .Enrich.WithProperty("ServiceName", "Sales")
@@ -66,6 +71,20 @@ try
                 maxRetryCount: 5,
                 maxRetryDelay: TimeSpan.FromSeconds(5),
                 errorNumbersToAdd: new int[] { 1205 }); // Include deadlock detection
+        }));
+
+    // Configure Rebus for event-driven architecture
+    var rabbitMqConnectionString = builder.Configuration.GetConnectionString("RabbitMQ") 
+        ?? "amqp://admin:admin123@host.docker.internal:5672/";
+    
+    Log.Information("Configuring Rebus for event publishing with RabbitMQ: {ConnectionString}", rabbitMqConnectionString);
+    
+    builder.Services.AddRebus((configure, serviceProvider) => configure
+        .Transport(t => t.UseRabbitMq(rabbitMqConnectionString, "sales.queue"))
+        .Options(o =>
+        {
+            o.SetNumberOfWorkers(1);
+            o.SetMaxParallelism(1);
         }));
 
     // Health checks with detailed monitoring
@@ -100,7 +119,7 @@ try
 
     builder.Services.AddAuthorization();
 
-    // Configure HTTP clients with correlation propagation (simplified)
+    // Configure HTTP clients with correlation propagation
     var inventoryApiUrl = builder.Configuration["Services:InventoryApi"] ?? "http://localhost:5000";
     Log.Information("Configuring HTTP client for Inventory API at {InventoryApiUrl}", inventoryApiUrl);
 
@@ -120,9 +139,9 @@ try
     })
     .AddHttpMessageHandler(() => new CorrelationHttpMessageHandler());
 
-    // Register mock event publisher for basic observability
-    builder.Services.AddScoped<IEventPublisher, MockEventPublisher>();
-    Log.Information("Registered MockEventPublisher for basic observability testing");
+    // Register real event publisher for event-driven architecture
+    builder.Services.AddScoped<IEventPublisher, RealEventPublisher>();
+    Log.Information("Registered RealEventPublisher for event-driven architecture");
 
     var app = builder.Build();
 
@@ -133,7 +152,7 @@ try
         app.UseSwaggerUI(c =>
         {
             c.SwaggerEndpoint("/swagger/v1/swagger.json", "Sales API V1");
-            c.DocumentTitle = "SalesAPI Sales with Stock Reservations & Basic Observability";
+            c.DocumentTitle = "SalesAPI Sales with Stock Reservations, Event Publishing & Basic Observability";
         });
         Log.Information("Swagger UI enabled for Sales service in development");
     }
@@ -161,7 +180,7 @@ try
     // Map controllers
     app.MapControllers();
 
-    Log.Information("?? Sales API starting with basic observability: Database with retry resilience, HTTP clients, mock events, and metrics enabled");
+    Log.Information("?? Sales API starting with event publishing, stock reservations, and basic observability");
     
     app.Run();
 }
