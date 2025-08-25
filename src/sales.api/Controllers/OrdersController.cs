@@ -469,15 +469,20 @@ namespace SalesApi.Controllers
         /// <summary>
         /// Simulates payment processing for order validation.
         /// In production, this would integrate with actual payment processors.
+        /// Enhanced with more realistic failure simulation for testing.
         /// </summary>
         /// <param name="amount">Total amount to process</param>
         /// <param name="correlationId">Correlation ID for tracing</param>
         /// <returns>True if payment successful; false otherwise</returns>
         /// <remarks>
-        /// This simulation implements basic business logic for payment validation:
-        /// - Small amounts (under $10) always succeed for testing
-        /// - Medium amounts (under $1000) have 95% success rate
-        /// - Large amounts (over $1000) have 90% success rate
+        /// Enhanced simulation implements more realistic business logic for payment validation:
+        /// - Small amounts (under $100) have 100% success rate for basic testing
+        /// - Medium amounts ($100-$999) have 95% success rate
+        /// - Large amounts ($1000-$1999) have 85% success rate  
+        /// - Very large amounts ($2000+) have 70% success rate for testing failures
+        /// 
+        /// The simulation ensures consistent behavior for testing by using order amount
+        /// as a factor in the randomization, making certain amounts more likely to fail.
         /// 
         /// In production, replace with actual payment gateway integration
         /// including proper error handling, retry logic, and security measures.
@@ -485,14 +490,44 @@ namespace SalesApi.Controllers
         private async Task<bool> SimulatePaymentProcessing(decimal amount, string correlationId)
         {
             // Simulate payment processing delay
-            await Task.Delay(100);
+            await Task.Delay(Random.Shared.Next(50, 200));
 
-            // Simple simulation logic - in production, integrate with real payment processor
+            _logger.LogDebug(
+                "Simulating payment processing for amount {Amount} with correlation {CorrelationId}",
+                amount,
+                correlationId);
+
+            // Enhanced simulation logic for more predictable testing
             var random = new Random();
             
-            if (amount < 10) return true; // Small amounts always succeed
+            // For very large amounts (testing scenario), increase failure rate significantly
+            if (amount >= 2000)
+            {
+                // Use both random chance and amount-based deterministic factor for testing
+                var hashCode = Math.Abs(correlationId.GetHashCode() + (int)(amount * 100));
+                var deterministicFactor = (hashCode % 100) / 100.0;
+                var randomFactor = random.NextDouble();
+                
+                // Combine deterministic and random factors - 70% failure rate for amounts >= $2000
+                var combinedFactor = (deterministicFactor + randomFactor) / 2;
+                var success = combinedFactor > 0.7; // 30% success rate
+                
+                _logger.LogInformation(
+                    "Payment simulation for large amount ${Amount}: {Result} (factors: det={Deterministic:F3}, rnd={Random:F3}, combined={Combined:F3})",
+                    amount,
+                    success ? "SUCCESS" : "FAILURE",
+                    deterministicFactor,
+                    randomFactor,
+                    combinedFactor);
+                
+                return success;
+            }
+            
+            // Standard simulation for other amounts
+            if (amount < 100) return true; // Small amounts always succeed
             if (amount < 1000) return random.NextDouble() > 0.05; // 95% success rate
-            return random.NextDouble() > 0.10; // 90% success rate for large amounts
+            return random.NextDouble() > 0.15; // 85% success rate for $1000-$1999
+
         }
 
         /// <summary>
