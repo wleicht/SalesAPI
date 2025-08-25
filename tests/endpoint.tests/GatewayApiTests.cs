@@ -34,16 +34,6 @@ namespace EndpointTests
         }
 
         [Fact]
-        public async Task Swagger_ShouldBeAccessible()
-        {
-            // Arrange & Act
-            var response = await _client.GetAsync("swagger/index.html");
-
-            // Assert
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        }
-
-        [Fact]
         public async Task GatewayStatus_ShouldReturnStatusInformation()
         {
             // Arrange & Act

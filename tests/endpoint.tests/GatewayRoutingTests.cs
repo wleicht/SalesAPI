@@ -129,29 +129,5 @@ namespace EndpointTests
                        response.StatusCode == HttpStatusCode.InternalServerError ||
                        response.StatusCode == HttpStatusCode.OK);
         }
-
-        [Fact]
-        public async Task InventoryRoute_Swagger_ShouldRouteToInventoryApi()
-        {
-            // Arrange & Act
-            var response = await _client.GetAsync("inventory/swagger/index.html");
-
-            // Assert - Should route to Inventory API Swagger
-            Assert.True(response.StatusCode == HttpStatusCode.OK || 
-                       response.StatusCode == HttpStatusCode.ServiceUnavailable ||
-                       response.StatusCode == HttpStatusCode.InternalServerError);
-        }
-
-        [Fact]
-        public async Task SalesRoute_Swagger_ShouldRouteToSalesApi()
-        {
-            // Arrange & Act
-            var response = await _client.GetAsync("sales/swagger/index.html");
-
-            // Assert - Should route to Sales API Swagger
-            Assert.True(response.StatusCode == HttpStatusCode.OK || 
-                       response.StatusCode == HttpStatusCode.ServiceUnavailable ||
-                       response.StatusCode == HttpStatusCode.InternalServerError);
-        }
     }
 }

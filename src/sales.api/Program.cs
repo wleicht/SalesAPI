@@ -145,6 +145,23 @@ try
 
     var app = builder.Build();
 
+    // Apply database migrations automatically
+    Log.Information("??? Applying database migrations for Sales service");
+    using (var scope = app.Services.CreateScope())
+    {
+        try
+        {
+            var context = scope.ServiceProvider.GetRequiredService<SalesDbContext>();
+            await context.Database.MigrateAsync();
+            Log.Information("? Database migrations applied successfully for Sales service");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "? Failed to apply database migrations for Sales service");
+            throw;
+        }
+    }
+
     // Configure the HTTP request pipeline
     if (app.Environment.IsDevelopment())
     {

@@ -124,6 +124,23 @@ try
 
     var app = builder.Build();
 
+    // Apply database migrations automatically
+    Log.Information("??? Applying database migrations for Inventory service");
+    using (var scope = app.Services.CreateScope())
+    {
+        try
+        {
+            var context = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            await context.Database.MigrateAsync();
+            Log.Information("? Database migrations applied successfully for Inventory service");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "? Failed to apply database migrations for Inventory service");
+            throw;
+        }
+    }
+
     // Configure the HTTP request pipeline
     if (app.Environment.IsDevelopment())
     {
@@ -164,7 +181,7 @@ try
     {
         var bus = scope.ServiceProvider.GetRequiredService<Rebus.Bus.IBus>();
         await bus.Subscribe<OrderConfirmedEvent>();
-        Log.Information("???? Subscribed to OrderConfirmedEvent for automatic stock deduction");
+        Log.Information("?? Subscribed to OrderConfirmedEvent for automatic stock deduction");
     }
 
     Log.Information("?? Inventory API starting with event processing, stock reservations, and basic observability");
