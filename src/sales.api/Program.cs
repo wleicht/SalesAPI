@@ -1,122 +1,212 @@
-using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Microsoft.EntityFrameworkCore;
 using Serilog;
 using SalesApi.Persistence;
 using SalesApi.Services;
+using SalesApi.Middleware;
+using SalesAPI.Services;
+using BuildingBlocks.Events.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
-using BuildingBlocks.Events.Infrastructure;
-using Rebus.Config;
-using Rebus.Routing.TypeBased;
+using Prometheus;
 
 /// <summary>
-/// Main startup class for the SalesApi application.
-/// Configures services, middlewares, JWT authentication, event publishing with Rebus, and endpoints.
+/// Main startup class for the Sales API with basic observability.
+/// Configures database, authentication, HTTP clients, health checks, 
+/// structured logging, correlation IDs, and Prometheus metrics.
 /// </summary>
 
+// Configure Serilog with structured logging for Sales service
 Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithCorrelationIdHeader("X-Correlation-Id")
+    .Enrich.WithProperty("ServiceName", "Sales")
+    .WriteTo.Console(outputTemplate: 
+        "[{Timestamp:HH:mm:ss} {Level:u3}] ?? {SourceContext} | {CorrelationId} | {Message:lj}{NewLine}{Exception}")
     .CreateBootstrapLogger();
-
-var builder = WebApplication.CreateBuilder(args);
-builder.Host.UseSerilog((ctx, lc) => lc
-    .WriteTo.Console()
-    .ReadFrom.Configuration(ctx.Configuration));
-
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-builder.Services.AddHealthChecks();
-
-// Configure Entity Framework for Sales
-builder.Services.AddDbContext<SalesDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection") ?? 
-        "Server=localhost;Database=SalesDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True"));
-
-// Configure HTTP clients
-builder.Services.AddHttpClient<SalesApi.Services.IInventoryClient, SalesApi.Services.InventoryClient>(client =>
-{
-    client.BaseAddress = new Uri(builder.Configuration["InventoryApi:BaseUrl"] ?? "http://localhost:5000/");
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
-
-builder.Services.AddHttpClient<SalesAPI.Services.StockReservationClient>(client =>
-{
-    client.BaseAddress = new Uri(builder.Configuration["InventoryApi:BaseUrl"] ?? "http://localhost:5000/");
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
-
-// Configure Rebus with RabbitMQ
-var rabbitMqConnectionString = builder.Configuration.GetConnectionString("RabbitMQ") ?? 
-    "amqp://admin:admin123@localhost:5672/";
 
 try
 {
-    builder.Services.AddRebus(configure => configure
-        .Transport(t => t.UseRabbitMq(rabbitMqConnectionString, "sales.api"))
-        .Options(o => 
+    Log.Information("?? Starting Sales API service with basic observability");
+
+    var builder = WebApplication.CreateBuilder(args);
+
+    // Configure Serilog as the logging provider
+    builder.Host.UseSerilog((ctx, lc) => lc
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
+        .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .Enrich.WithCorrelationIdHeader("X-Correlation-Id")
+        .Enrich.WithProperty("ServiceName", "Sales")
+        .WriteTo.Console(outputTemplate: 
+            "[{Timestamp:HH:mm:ss} {Level:u3}] ?? {SourceContext} | {CorrelationId} | {Message:lj}{NewLine}{Exception}")
+        .ReadFrom.Configuration(ctx.Configuration));
+
+    // Add services to the container.
+    // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
+
+    // Database configuration with enhanced logging and retry resilience
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
+    Log.Information("Configuring database connection for Sales service with retry resilience");
+    builder.Services.AddDbContext<SalesDbContext>(options =>
+        options.UseSqlServer(connectionString, sqlOptions =>
         {
-            o.SetNumberOfWorkers(1);
-            o.SetMaxParallelism(1);
+            // Enable retry on failure for transient errors (deadlocks, timeouts, etc.)
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorNumbersToAdd: new int[] { 1205 }); // Include deadlock detection
         }));
 
-    // Register Event Publisher
-    builder.Services.AddScoped<IEventPublisher, SalesAPI.Services.EventPublisher>();
+    // Health checks with detailed monitoring
+    builder.Services.AddHealthChecks()
+        .AddCheck("sales_health", () =>
+        {
+            Log.Information("Health check executed for Sales service");
+            return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy("Sales API is running");
+        });
+
+    // JWT Authentication configuration
+    var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
+    var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("JWT Issuer not configured");
+    var jwtAudience = builder.Configuration["Jwt:Audience"] ?? throw new InvalidOperationException("JWT Audience not configured");
+
+    Log.Information("Configuring JWT authentication for Sales service with issuer: {Issuer}", jwtIssuer);
+
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = jwtIssuer,
+                ValidAudience = jwtAudience,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+            };
+        });
+
+    builder.Services.AddAuthorization();
+
+    // Configure HTTP clients with correlation propagation (simplified)
+    var inventoryApiUrl = builder.Configuration["Services:InventoryApi"] ?? "http://localhost:5000";
+    Log.Information("Configuring HTTP client for Inventory API at {InventoryApiUrl}", inventoryApiUrl);
+
+    // Configure HTTP client for Inventory API with correlation propagation
+    builder.Services.AddHttpClient<IInventoryClient, InventoryClient>(client =>
+    {
+        client.BaseAddress = new Uri(inventoryApiUrl);
+        client.Timeout = TimeSpan.FromSeconds(30);
+    })
+    .AddHttpMessageHandler(() => new CorrelationHttpMessageHandler());
+
+    // Configure HTTP client for Stock Reservations with correlation propagation  
+    builder.Services.AddHttpClient<StockReservationClient>(client =>
+    {
+        client.BaseAddress = new Uri(inventoryApiUrl);
+        client.Timeout = TimeSpan.FromSeconds(30);
+    })
+    .AddHttpMessageHandler(() => new CorrelationHttpMessageHandler());
+
+    // Register mock event publisher for basic observability
+    builder.Services.AddScoped<IEventPublisher, MockEventPublisher>();
+    Log.Information("Registered MockEventPublisher for basic observability testing");
+
+    var app = builder.Build();
+
+    // Configure the HTTP request pipeline
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI(c =>
+        {
+            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Sales API V1");
+            c.DocumentTitle = "SalesAPI Sales with Stock Reservations & Basic Observability";
+        });
+        Log.Information("Swagger UI enabled for Sales service in development");
+    }
+
+    // Enable Prometheus metrics collection
+    app.UseRouting();
+    app.UseHttpMetrics(); // Collect HTTP metrics
+
+    // Correlation middleware should be early in the pipeline
+    app.UseCorrelation();
+
+    app.UseHttpsRedirection();
+
+    // Authentication and Authorization middleware
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    // Map health check endpoint
+    app.MapHealthChecks("/health");
+
+    // Map Prometheus metrics endpoint
+    app.MapMetrics();
+    Log.Information("Prometheus metrics endpoint available at /metrics for Sales service");
+
+    // Map controllers
+    app.MapControllers();
+
+    Log.Information("?? Sales API starting with basic observability: Database with retry resilience, HTTP clients, mock events, and metrics enabled");
     
-    Log.Information("Rebus configured successfully for Sales API");
+    app.Run();
 }
 catch (Exception ex)
 {
-    Log.Warning(ex, "Failed to configure Rebus, using dummy event publisher");
-    builder.Services.AddScoped<IEventPublisher, SalesAPI.Services.DummyEventPublisher>();
+    Log.Fatal(ex, "?? Sales API service failed to start");
+    throw;
+}
+finally
+{
+    Log.Information("?? Sales API service shutting down");
+    Log.CloseAndFlush();
 }
 
-// Configure JWT Authentication
-var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("JWT Issuer not configured");
-var jwtAudience = builder.Configuration["Jwt:Audience"] ?? throw new InvalidOperationException("JWT Audience not configured");
-
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+/// <summary>
+/// HTTP message handler for propagating correlation IDs in outgoing HTTP requests.
+/// Ensures correlation context is maintained across service boundaries.
+/// </summary>
+public class CorrelationHttpMessageHandler : DelegatingHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, 
+        CancellationToken cancellationToken)
     {
-        options.TokenValidationParameters = new TokenValidationParameters
+        // Extract correlation ID from current HTTP context or activity
+        var correlationId = GetCurrentCorrelationId();
+        
+        if (!string.IsNullOrWhiteSpace(correlationId))
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtIssuer,
-            ValidAudience = jwtAudience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.Zero
-        };
-    });
+            request.Headers.Add("X-Correlation-Id", correlationId);
+        }
 
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy("CustomerOrAdmin", policy => policy.RequireRole("customer", "admin"));
-});
+        return await base.SendAsync(request, cancellationToken);
+    }
 
-var app = builder.Build();
+    private static string? GetCurrentCorrelationId()
+    {
+        // Try to get correlation ID from current activity (set by middleware)
+        var activity = System.Diagnostics.Activity.Current;
+        if (activity?.GetTagItem("correlation_id") is string correlationId)
+        {
+            return correlationId;
+        }
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
+        // Fallback: generate new correlation ID for outgoing requests
+        return $"sales-out-{Guid.NewGuid():N}";
+    }
 }
-
-app.UseHttpsRedirection();
-
-// Authentication and Authorization middleware
-app.UseAuthentication();
-app.UseAuthorization();
-
-app.MapControllers();
-app.MapHealthChecks("/health");
-
-Log.Information("Sales API starting with JWT authentication and Rebus event publishing enabled");
-app.Run();

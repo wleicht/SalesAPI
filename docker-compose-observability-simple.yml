@@ -11,7 +11,6 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Server=host.docker.internal;Database=InventoryDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True
-      - ConnectionStrings__RabbitMQ=amqp://admin:admin123@host.docker.internal:5672/
       - Jwt__Key=ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!
       - Jwt__Issuer=SalesAPI-Gateway
       - Jwt__Audience=SalesAPI-Services
@@ -21,12 +20,6 @@ services:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
   sales:
     build:
@@ -40,7 +33,6 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Server=host.docker.internal;Database=SalesDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True
-      - ConnectionStrings__RabbitMQ=amqp://admin:admin123@host.docker.internal:5672/
       - Services__InventoryApi=http://inventory:8080
       - Jwt__Key=ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!
       - Jwt__Issuer=SalesAPI-Gateway
@@ -51,12 +43,6 @@ services:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
   gateway:
     build:
@@ -79,12 +65,6 @@ services:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
 networks:
   salesapi-network:

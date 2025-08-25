@@ -1,0 +1,71 @@
+# Prometheus configuration for SalesAPI observability (Etapa 7)
+# Scrapes metrics from Gateway, Inventory, and Sales APIs
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Scrape configuration for SalesAPI services
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 5s
+
+  # SalesAPI Gateway metrics
+  - job_name: 'salesapi-gateway'
+    static_configs:
+      - targets: ['gateway:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+
+  # SalesAPI Inventory service metrics  
+  - job_name: 'salesapi-inventory'
+    static_configs:
+      - targets: ['inventory:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+
+  # SalesAPI Sales service metrics
+  - job_name: 'salesapi-sales'
+    static_configs:
+      - targets: ['sales:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+
+  # Infrastructure services monitoring (optional)
+  # - job_name: 'rabbitmq'
+  #   static_configs:
+  #     - targets: ['rabbitmq:15692']
+  #   metrics_path: '/metrics'
+  #   scrape_interval: 30s
+
+  # - job_name: 'sqlserver'
+  #   static_configs:
+  #     - targets: ['sqlserver:1433']
+  #   metrics_path: '/metrics'
+  #   scrape_interval: 30s
+
+# Basic alerting rules (can be extended)
+rule_files:
+  # - "alert_rules.yml"
+
+# Alertmanager configuration (for future use)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093

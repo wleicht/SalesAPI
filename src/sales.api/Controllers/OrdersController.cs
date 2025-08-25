@@ -50,29 +50,32 @@ namespace SalesApi.Controllers
 
         /// <summary>
         /// Creates a new order with automatic stock reservation and validation.
-        /// Implements the reservation-based order processing workflow with comprehensive error handling.
+        /// Implements the reservation-based order processing workflow with comprehensive error handling
+        /// and enhanced observability through correlation tracking.
         /// </summary>
         /// <param name="createOrderDto">Order creation data including customer ID and items</param>
         /// <returns>Created order details with reservation information</returns>
         /// <remarks>
-        /// Enhanced Order Processing Flow with Stock Reservations:
-        /// 1. Validates order data using business rules and constraints
-        /// 2. Creates stock reservations synchronously to prevent race conditions
-        /// 3. Validates payment simulation (future: integrate with payment processor)
-        /// 4. Creates order record with confirmed status if all validations pass
-        /// 5. Publishes OrderConfirmedEvent for asynchronous stock deduction processing
-        /// 6. Returns order details with reservation information for customer confirmation
+        /// Enhanced Order Processing Flow with Stock Reservations and Observability:
+        /// 1. Extract/generate correlation ID for end-to-end tracking
+        /// 2. Validates order data using business rules and constraints
+        /// 3. Creates stock reservations synchronously to prevent race conditions
+        /// 4. Validates payment simulation (future: integrate with payment processor)
+        /// 5. Creates order record with confirmed status if all validations pass
+        /// 6. Publishes OrderConfirmedEvent for asynchronous stock deduction processing
+        /// 7. Returns order details with reservation information for customer confirmation
+        /// 
+        /// Observability Enhancements:
+        /// - Correlation ID propagation across all operations
+        /// - Structured logging with correlation context
+        /// - Performance timing for each workflow step
+        /// - Detailed error categorization for monitoring
         /// 
         /// If any step fails:
         /// - Stock reservations are automatically released via OrderCancelledEvent
         /// - Order is marked as cancelled with appropriate error information
         /// - Customer receives clear error messaging with actionable guidance
-        /// 
-        /// This approach provides better reliability and customer experience by:
-        /// - Preventing overselling through atomic stock reservation
-        /// - Enabling payment processing delays without losing stock allocation
-        /// - Supporting complex order workflows with proper compensation logic
-        /// - Providing comprehensive audit trails for business operations
+        /// - All failures are tracked with correlation context for debugging
         /// </remarks>
         /// <response code="201">Order created successfully with stock reservations</response>
         /// <response code="400">Invalid order data or validation errors</response>
@@ -86,19 +89,19 @@ namespace SalesApi.Controllers
         [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]
         public async Task<ActionResult<OrderDto>> CreateOrder([FromBody] CreateOrderDto createOrderDto)
         {
-            var correlationId = HttpContext.TraceIdentifier ?? Guid.NewGuid().ToString();
+            // Extract correlation ID from headers or generate new one
+            var correlationId = GetCorrelationId();
+            var orderStartTime = DateTime.UtcNow;
             
             _logger.LogInformation(
-                "Creating order for Customer {CustomerId} with {ItemCount} items. CorrelationId: {CorrelationId}",
+                "???? Starting order creation: Customer {CustomerId} | Items: {ItemCount} | CorrelationId: {CorrelationId}",
                 createOrderDto.CustomerId,
                 createOrderDto.Items.Count,
                 correlationId);
 
-            using var transaction = await _context.Database.BeginTransactionAsync();
-
             try
             {
-                // Step 1: Create stock reservation request
+                // Step 1: Create stock reservation request with correlation
                 var reservationRequest = new StockReservationRequest
                 {
                     OrderId = Guid.NewGuid(), // Generate order ID for reservation
@@ -111,20 +114,25 @@ namespace SalesApi.Controllers
                 };
 
                 _logger.LogInformation(
-                    "Creating stock reservations for Order {OrderId} with {ItemCount} items",
+                    "???? Creating stock reservations: Order {OrderId} | Items: {ItemCount} | CorrelationId: {CorrelationId}",
                     reservationRequest.OrderId,
-                    reservationRequest.Items.Count);
+                    reservationRequest.Items.Count,
+                    correlationId);
 
-                // Step 2: Create stock reservations synchronously
+                // Step 2: Create stock reservations synchronously with correlation tracking
+                var reservationStartTime = DateTime.UtcNow;
                 var reservationResponse = await _stockReservationClient.CreateReservationAsync(
                     reservationRequest);
+                var reservationDuration = DateTime.UtcNow - reservationStartTime;
 
                 if (!reservationResponse.Success)
                 {
                     _logger.LogWarning(
-                        "Stock reservation failed for Order {OrderId}. Error: {Error}",
+                        "??? Stock reservation failed: Order {OrderId} | Duration: {Duration}ms | Error: {Error} | CorrelationId: {CorrelationId}",
                         reservationRequest.OrderId,
-                        reservationResponse.ErrorMessage);
+                        reservationDuration.TotalMilliseconds,
+                        reservationResponse.ErrorMessage,
+                        correlationId);
 
                     return UnprocessableEntity(new ProblemDetails
                     {
@@ -135,9 +143,11 @@ namespace SalesApi.Controllers
                 }
 
                 _logger.LogInformation(
-                    "Stock reservations created successfully for Order {OrderId}. Processing {Count} items.",
+                    "??? Stock reservations created: Order {OrderId} | Items: {Count} | Duration: {Duration}ms | CorrelationId: {CorrelationId}",
                     reservationRequest.OrderId,
-                    reservationResponse.TotalItemsProcessed);
+                    reservationResponse.TotalItemsProcessed,
+                    reservationDuration.TotalMilliseconds,
+                    correlationId);
 
                 // Step 3: Process and validate order items with reserved stock
                 var orderItems = new List<OrderItem>();
@@ -153,9 +163,10 @@ namespace SalesApi.Controllers
                     {
                         var errorMessage = reservationResult?.ErrorMessage ?? "Unknown reservation error";
                         _logger.LogError(
-                            "Reservation validation failed for Product {ProductId}. Error: {Error}",
+                            "??? Reservation validation failed: Product {ProductId} | Error: {Error} | CorrelationId: {CorrelationId}",
                             itemDto.ProductId,
-                            errorMessage);
+                            errorMessage,
+                            correlationId);
 
                         // Publish cancellation event to release any successful reservations
                         await PublishOrderCancelledEvent(
@@ -178,7 +189,10 @@ namespace SalesApi.Controllers
                     var productResponse = await _inventoryClient.GetProductAsync(itemDto.ProductId);
                     if (productResponse == null)
                     {
-                        _logger.LogError("Product {ProductId} not found during order processing", itemDto.ProductId);
+                        _logger.LogError(
+                            "??? Product not found during order processing: Product {ProductId} | CorrelationId: {CorrelationId}", 
+                            itemDto.ProductId, 
+                            correlationId);
                         
                         await PublishOrderCancelledEvent(
                             reservationRequest.OrderId,
@@ -208,26 +222,33 @@ namespace SalesApi.Controllers
                     totalAmount += orderItem.TotalPrice;
 
                     _logger.LogDebug(
-                        "Order item created: Product {ProductId} ({ProductName}), Quantity: {Quantity}, UnitPrice: {UnitPrice}",
+                        "???? Order item validated: Product {ProductId} ({ProductName}) | Qty: {Quantity} | Price: {UnitPrice} | CorrelationId: {CorrelationId}",
                         orderItem.ProductId,
                         orderItem.ProductName,
                         orderItem.Quantity,
-                        orderItem.UnitPrice);
+                        orderItem.UnitPrice,
+                        correlationId);
                 }
 
-                // Step 4: Simulate payment processing
+                // Step 4: Simulate payment processing with observability
                 _logger.LogInformation(
-                    "Simulating payment processing for Order {OrderId}, Amount: {Amount}",
+                    "???? Starting payment processing: Order {OrderId} | Amount: {Amount} | CorrelationId: {CorrelationId}",
                     reservationRequest.OrderId,
-                    totalAmount);
+                    totalAmount,
+                    correlationId);
 
+                var paymentStartTime = DateTime.UtcNow;
                 var paymentSuccessful = await SimulatePaymentProcessing(totalAmount, correlationId);
+                var paymentDuration = DateTime.UtcNow - paymentStartTime;
+                
                 if (!paymentSuccessful)
                 {
                     _logger.LogWarning(
-                        "Payment processing failed for Order {OrderId}, Amount: {Amount}",
+                        "????? Payment processing failed: Order {OrderId} | Amount: {Amount} | Duration: {Duration}ms | CorrelationId: {CorrelationId}",
                         reservationRequest.OrderId,
-                        totalAmount);
+                        totalAmount,
+                        paymentDuration.TotalMilliseconds,
+                        correlationId);
 
                     // Publish cancellation event to release reservations
                     await PublishOrderCancelledEvent(
@@ -246,7 +267,14 @@ namespace SalesApi.Controllers
                     });
                 }
 
-                // Step 5: Create order with confirmed status
+                _logger.LogInformation(
+                    "????? Payment processing successful: Order {OrderId} | Amount: {Amount} | Duration: {Duration}ms | CorrelationId: {CorrelationId}",
+                    reservationRequest.OrderId,
+                    totalAmount,
+                    paymentDuration.TotalMilliseconds,
+                    correlationId);
+
+                // Step 5: Create order with confirmed status (using EF retry strategy)
                 var order = new Order
                 {
                     Id = reservationRequest.OrderId, // Use the same ID as reservations
@@ -260,10 +288,11 @@ namespace SalesApi.Controllers
                 await _context.SaveChangesAsync();
 
                 _logger.LogInformation(
-                    "Order {OrderId} created successfully with status {Status}, Amount: {Amount}",
+                    "??? Order created successfully: Order {OrderId} | Status: {Status} | Amount: {Amount} | CorrelationId: {CorrelationId}",
                     order.Id,
                     order.Status,
-                    order.TotalAmount);
+                    order.TotalAmount,
+                    correlationId);
 
                 // Step 6: Publish OrderConfirmedEvent for asynchronous stock deduction
                 try
@@ -288,22 +317,22 @@ namespace SalesApi.Controllers
                     await _eventPublisher.PublishAsync(orderConfirmedEvent);
                     
                     _logger.LogInformation(
-                        "OrderConfirmedEvent published for Order {OrderId}",
-                        order.Id);
+                        "???? OrderConfirmedEvent published: Order {OrderId} | CorrelationId: {CorrelationId}",
+                        order.Id,
+                        correlationId);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex,
-                        "Failed to publish OrderConfirmedEvent for Order {OrderId}. Order created but event not sent.",
-                        order.Id);
+                        "????? Failed to publish OrderConfirmedEvent: Order {OrderId} | CorrelationId: {CorrelationId}",
+                        order.Id,
+                        correlationId);
                     
                     // Order is still valid even if event publishing fails
                     // The event system will retry or manual intervention can resolve
                 }
 
-                await transaction.CommitAsync();
-
-                // Step 7: Return order details
+                // Step 7: Return order details with timing information
                 var orderDto = new OrderDto
                 {
                     Id = order.Id,
@@ -321,19 +350,23 @@ namespace SalesApi.Controllers
                     }).ToList()
                 };
 
+                var totalDuration = DateTime.UtcNow - orderStartTime;
                 _logger.LogInformation(
-                    "Order creation completed successfully for Order {OrderId}",
-                    order.Id);
+                    "???? Order creation completed successfully: Order {OrderId} | Total Duration: {Duration}ms | CorrelationId: {CorrelationId}",
+                    order.Id,
+                    totalDuration.TotalMilliseconds,
+                    correlationId);
 
                 return CreatedAtAction(nameof(GetOrderById), new { id = order.Id }, orderDto);
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync();
-                
+                var totalDuration = DateTime.UtcNow - orderStartTime;
                 _logger.LogError(ex,
-                    "Failed to create order for Customer {CustomerId}. Transaction rolled back.",
-                    createOrderDto.CustomerId);
+                    "???? Order creation failed: Customer {CustomerId} | Duration: {Duration}ms | CorrelationId: {CorrelationId}",
+                    createOrderDto.CustomerId,
+                    totalDuration.TotalMilliseconds,
+                    correlationId);
 
                 return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails
                 {
@@ -467,12 +500,12 @@ namespace SalesApi.Controllers
         }
 
         /// <summary>
-        /// Simulates payment processing for order validation.
+        /// Simulates payment processing for order validation with enhanced observability.
         /// In production, this would integrate with actual payment processors.
-        /// Enhanced with more realistic failure simulation for testing.
+        /// Enhanced with more realistic failure simulation for testing and correlation tracking.
         /// </summary>
         /// <param name="amount">Total amount to process</param>
-        /// <param name="correlationId">Correlation ID for tracing</param>
+        /// <param name="correlationId">Correlation ID for request tracing</param>
         /// <returns>True if payment successful; false otherwise</returns>
         /// <remarks>
         /// Enhanced simulation implements more realistic business logic for payment validation:
@@ -484,21 +517,33 @@ namespace SalesApi.Controllers
         /// The simulation ensures consistent behavior for testing by using order amount
         /// as a factor in the randomization, making certain amounts more likely to fail.
         /// 
+        /// Observability enhancements:
+        /// - Structured logging with correlation ID
+        /// - Payment simulation decision tracking
+        /// - Performance timing information
+        /// - Success/failure rate monitoring
+        /// 
         /// In production, replace with actual payment gateway integration
         /// including proper error handling, retry logic, and security measures.
         /// </remarks>
         private async Task<bool> SimulatePaymentProcessing(decimal amount, string correlationId)
         {
+            var paymentStartTime = DateTime.UtcNow;
+            
             // Simulate payment processing delay
-            await Task.Delay(Random.Shared.Next(50, 200));
+            var processingDelay = Random.Shared.Next(50, 200);
+            await Task.Delay(processingDelay);
 
             _logger.LogDebug(
-                "Simulating payment processing for amount {Amount} with correlation {CorrelationId}",
+                "???? Payment processing simulation: Amount: ${Amount} | ProcessingDelay: {Delay}ms | CorrelationId: {CorrelationId}",
                 amount,
+                processingDelay,
                 correlationId);
 
             // Enhanced simulation logic for more predictable testing
             var random = new Random();
+            bool success;
+            string decisionReason;
             
             // For very large amounts (testing scenario), increase failure rate significantly
             if (amount >= 2000)
@@ -510,36 +555,59 @@ namespace SalesApi.Controllers
                 
                 // Combine deterministic and random factors - 70% failure rate for amounts >= $2000
                 var combinedFactor = (deterministicFactor + randomFactor) / 2;
-                var success = combinedFactor > 0.7; // 30% success rate
-                
-                _logger.LogInformation(
-                    "Payment simulation for large amount ${Amount}: {Result} (factors: det={Deterministic:F3}, rnd={Random:F3}, combined={Combined:F3})",
-                    amount,
-                    success ? "SUCCESS" : "FAILURE",
-                    deterministicFactor,
-                    randomFactor,
-                    combinedFactor);
-                
-                return success;
+                success = combinedFactor > 0.7; // 30% success rate
+                decisionReason = $"Large amount logic: det={deterministicFactor:F3}, rnd={randomFactor:F3}, combined={combinedFactor:F3}";
             }
-            
-            // Standard simulation for other amounts
-            if (amount < 100) return true; // Small amounts always succeed
-            if (amount < 1000) return random.NextDouble() > 0.05; // 95% success rate
-            return random.NextDouble() > 0.15; // 85% success rate for $1000-$1999
+            else if (amount < 100)
+            {
+                success = true; // Small amounts always succeed
+                decisionReason = "Small amount - guaranteed success";
+            }
+            else if (amount < 1000)
+            {
+                success = random.NextDouble() > 0.05; // 95% success rate
+                decisionReason = "Medium amount - 95% success rate";
+            }
+            else
+            {
+                success = random.NextDouble() > 0.15; // 85% success rate for $1000-$1999
+                decisionReason = "Large amount - 85% success rate";
+            }
 
+            var processingDuration = DateTime.UtcNow - paymentStartTime;
+            
+            if (success)
+            {
+                _logger.LogInformation(
+                    "????? Payment simulation SUCCESS: Amount: ${Amount} | Duration: {Duration}ms | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                    amount,
+                    processingDuration.TotalMilliseconds,
+                    decisionReason,
+                    correlationId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "????? Payment simulation FAILURE: Amount: ${Amount} | Duration: {Duration}ms | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                    amount,
+                    processingDuration.TotalMilliseconds,
+                    decisionReason,
+                    correlationId);
+            }
+
+            return success;
         }
 
         /// <summary>
         /// Publishes an OrderCancelledEvent to release stock reservations for failed orders.
-        /// Implements the compensation pattern for distributed transaction management.
+        /// Implements the compensation pattern for distributed transaction management with correlation tracking.
         /// </summary>
         /// <param name="orderId">ID of the order being cancelled</param>
         /// <param name="customerId">ID of the customer</param>
         /// <param name="totalAmount">Total amount of the order</param>
         /// <param name="orderItems">Items that were being ordered</param>
         /// <param name="cancellationReason">Reason for cancellation</param>
-        /// <param name="correlationId">Correlation ID for tracing</param>
+        /// <param name="correlationId">Correlation ID for tracking the request</param>
         /// <returns>Task representing the asynchronous operation</returns>
         private async Task PublishOrderCancelledEvent(
             Guid orderId,
@@ -551,6 +619,12 @@ namespace SalesApi.Controllers
         {
             try
             {
+                _logger.LogInformation(
+                    "???? Publishing OrderCancelledEvent: Order {OrderId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                    orderId,
+                    cancellationReason,
+                    correlationId);
+
                 var orderCancelledEvent = new OrderCancelledEvent
                 {
                     OrderId = orderId,
@@ -573,19 +647,39 @@ namespace SalesApi.Controllers
                 await _eventPublisher.PublishAsync(orderCancelledEvent);
                 
                 _logger.LogInformation(
-                    "OrderCancelledEvent published for Order {OrderId}. Reason: {Reason}",
+                    "????? OrderCancelledEvent published successfully: Order {OrderId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
                     orderId,
-                    cancellationReason);
+                    cancellationReason,
+                    correlationId);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "Failed to publish OrderCancelledEvent for Order {OrderId}",
-                    orderId);
+                    "????? Failed to publish OrderCancelledEvent: Order {OrderId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                    orderId,
+                    cancellationReason,
+                    correlationId);
                 
                 // Don't throw here - cancellation event failure shouldn't block the error response
                 // Manual cleanup or monitoring alerts can handle orphaned reservations
             }
+        }
+
+        /// <summary>
+        /// Extracts correlation ID from request headers or generates a new one.
+        /// </summary>
+        /// <returns>Valid correlation ID for request tracking</returns>
+        private string GetCorrelationId()
+        {
+            // Try to get correlation ID from request headers (set by Gateway)
+            if (HttpContext.Request.Headers.TryGetValue("X-Correlation-Id", out var correlationId) &&
+                !string.IsNullOrWhiteSpace(correlationId))
+            {
+                return correlationId!;
+            }
+
+            // Fallback: generate new correlation ID
+            return $"sales-{Guid.NewGuid():N}";
         }
     }
 }

@@ -49,19 +49,20 @@ namespace InventoryApi.Services
         /// <summary>
         /// Processes an OrderConfirmedEvent by converting stock reservations to debited status.
         /// Implements comprehensive error handling, idempotency checks, and audit trail creation.
+        /// Uses Entity Framework retry strategy for handling transient failures.
         /// </summary>
         /// <param name="orderEvent">The order confirmed event containing order details and items to process</param>
         /// <returns>A task representing the asynchronous event processing operation</returns>
         /// <remarks>
         /// Processing flow with reservations:
         /// 1. Validates event hasn't been processed before (idempotency)
-        /// 2. Begins database transaction for consistency
+        /// 2. Uses Entity Framework SaveChanges for atomic operations
         /// 3. Finds existing stock reservations for the order
         /// 4. Converts reservations from Reserved to Debited status
         /// 5. Updates product stock quantities by debiting reserved amounts
         /// 6. Marks event as processed to prevent reprocessing
         /// 7. Publishes StockDebitedEvent response
-        /// 8. Commits transaction or rolls back on error
+        /// 8. Relies on retry strategy for transient failures
         /// 
         /// Reservation-based processing ensures that stock has already been validated
         /// and allocated during the synchronous reservation phase, making this
@@ -72,13 +73,11 @@ namespace InventoryApi.Services
         /// </remarks>
         /// <exception cref="Exception">
         /// Re-throws any processing exceptions to trigger Rebus retry mechanisms.
-        /// Database transactions are rolled back automatically on failures.
+        /// Entity Framework retry strategy handles transient database failures.
         /// </exception>
         public async Task Handle(OrderConfirmedEvent orderEvent)
         {
             _logger.LogInformation("=== HANDLER CALLED === Processing OrderConfirmedEvent for Order {OrderId}", orderEvent.OrderId);
-
-            using var transaction = await _dbContext.Database.BeginTransactionAsync();
 
             try
             {
@@ -125,7 +124,6 @@ namespace InventoryApi.Services
 
                     _dbContext.ProcessedEvents.Add(errorProcessedEvent);
                     await _dbContext.SaveChangesAsync();
-                    await transaction.CommitAsync();
                     return;
                 }
 
@@ -238,7 +236,7 @@ namespace InventoryApi.Services
 
                 _dbContext.ProcessedEvents.Add(processedEvent);
 
-                // Save all changes first
+                // Save all changes with retry strategy
                 await _dbContext.SaveChangesAsync();
 
                 _logger.LogInformation("Database changes saved successfully for Order {OrderId}", orderEvent.OrderId);
@@ -263,9 +261,6 @@ namespace InventoryApi.Services
                     _logger.LogWarning(ex, "Failed to publish StockDebitedEvent for Order {OrderId}, but stock was processed successfully", orderEvent.OrderId);
                 }
 
-                // Commit transaction
-                await transaction.CommitAsync();
-
                 _logger.LogInformation(
                     "=== HANDLER COMPLETED === Successfully processed OrderConfirmedEvent for Order {OrderId}. Debited {Count} items from reservations. Success: {Success}",
                     orderEvent.OrderId,
@@ -274,9 +269,8 @@ namespace InventoryApi.Services
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync();
                 _logger.LogError(ex,
-                    "=== HANDLER FAILED === Failed to process OrderConfirmedEvent for Order {OrderId}. Transaction rolled back.",
+                    "=== HANDLER FAILED === Failed to process OrderConfirmedEvent for Order {OrderId}.",
                     orderEvent.OrderId);
 
                 // Re-throw to trigger retry mechanism

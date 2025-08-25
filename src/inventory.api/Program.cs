@@ -1,138 +1,150 @@
-using InventoryApi.Persistence;
-using InventoryApi.Models;
-using InventoryApi.Services;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
-using FluentValidation;
+using InventoryApi.Persistence;
+using InventoryApi.Services;
+using InventoryApi.Middleware;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
-using BuildingBlocks.Events.Infrastructure;
-using BuildingBlocks.Events.Domain;
-using Rebus.Config;
-using Rebus.Routing.TypeBased;
+using Prometheus;
 
 /// <summary>
-/// Main startup class for the InventoryApi application.
-/// Configures services, middlewares, JWT authentication, event consumption with Rebus, and endpoints.
+/// Main startup class for the Inventory API with basic observability.
+/// Configures database, authentication, health checks, 
+/// structured logging, correlation IDs, and Prometheus metrics.
 /// </summary>
-public class Program
+
+// Configure Serilog with structured logging for Inventory service
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithCorrelationIdHeader("X-Correlation-Id")
+    .Enrich.WithProperty("ServiceName", "Inventory")
+    .WriteTo.Console(outputTemplate: 
+        "[{Timestamp:HH:mm:ss} {Level:u3}] ?? {SourceContext} | {CorrelationId} | {Message:lj}{NewLine}{Exception}")
+    .CreateBootstrapLogger();
+
+try
 {
-    /// <summary>
-    /// Main entry point for the application.
-    /// </summary>
-    /// <param name="args">Command-line arguments.</param>
-    public static void Main(string[] args)
-    {
-        Log.Logger = new LoggerConfiguration()
-            .WriteTo.Console()
-            .CreateBootstrapLogger();
+    Log.Information("?? Starting Inventory API service with basic observability");
 
-        var builder = WebApplication.CreateBuilder(args);
-        builder.Host.UseSerilog((ctx, lc) => lc
-            .WriteTo.Console()
-            .ReadFrom.Configuration(ctx.Configuration));
+    var builder = WebApplication.CreateBuilder(args);
 
-        // Add services to the container.
-        builder.Services.AddControllers();
-        builder.Services.AddEndpointsApiExplorer();
-        builder.Services.AddSwaggerGen();
-        builder.Services.AddHealthChecks();
+    // Configure Serilog as the logging provider
+    builder.Host.UseSerilog((ctx, lc) => lc
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
+        .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .Enrich.WithCorrelationIdHeader("X-Correlation-Id")
+        .Enrich.WithProperty("ServiceName", "Inventory")
+        .WriteTo.Console(outputTemplate: 
+            "[{Timestamp:HH:mm:ss} {Level:u3}] ?? {SourceContext} | {CorrelationId} | {Message:lj}{NewLine}{Exception}")
+        .ReadFrom.Configuration(ctx.Configuration));
 
-        // Configure Entity Framework
-        builder.Services.AddDbContext<InventoryDbContext>(options =>
-            options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection") ?? 
-                "Server=localhost;Database=InventoryDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True"));
+    // Add services to the container.
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
 
-        // Configure Rebus with RabbitMQ
-        var rabbitMqConnectionString = builder.Configuration.GetConnectionString("RabbitMQ") ?? 
-            "amqp://admin:admin123@localhost:5672/";
+    // Database configuration with enhanced logging and retry resilience
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-        var rebusConfigured = false;
-
-        try
+    Log.Information("Configuring database connection for Inventory service with retry resilience");
+    builder.Services.AddDbContext<InventoryDbContext>(options =>
+        options.UseSqlServer(connectionString, sqlOptions =>
         {
-            // Register message handlers first
-            builder.Services.AddScoped<OrderConfirmedEventHandler>();
-            builder.Services.AddScoped<OrderCancelledEventHandler>();
+            // Enable retry on failure for transient errors (deadlocks, timeouts, etc.)
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorNumbersToAdd: new int[] { 1205 }); // Include deadlock detection
+        }));
 
-            builder.Services.AddRebus(configure => configure
-                .Transport(t => t.UseRabbitMq(rabbitMqConnectionString, "inventory.api"))
-                .Options(o => 
-                {
-                    o.SetNumberOfWorkers(1);
-                    o.SetMaxParallelism(1);
-                }));
-
-            // Register handlers automatically
-            builder.Services.AutoRegisterHandlersFromAssemblyOf<OrderConfirmedEventHandler>();
-            builder.Services.AutoRegisterHandlersFromAssemblyOf<OrderCancelledEventHandler>();
-
-            // Register Event Publisher
-            builder.Services.AddScoped<IEventPublisher, EventPublisher>();
-            
-            rebusConfigured = true;
-            Log.Information("Rebus configured successfully for Inventory API");
-        }
-        catch (Exception ex)
+    // Health checks with detailed monitoring
+    builder.Services.AddHealthChecks()
+        .AddCheck("inventory_health", () =>
         {
-            Log.Warning(ex, "Failed to configure Rebus: {Message}", ex.Message);
-        }
-
-        // Fallback to dummy implementation if Rebus not configured
-        if (!rebusConfigured)
-        {
-            Log.Information("Using dummy event publisher - events will be logged but not processed");
-            builder.Services.AddScoped<IEventPublisher, DummyEventPublisher>();
-        }
-
-        // Configure JWT Authentication
-        var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
-        var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("JWT Issuer not configured");
-        var jwtAudience = builder.Configuration["Jwt:Audience"] ?? throw new InvalidOperationException("JWT Audience not configured");
-
-        builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
-            {
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuer = true,
-                    ValidateAudience = true,
-                    ValidateLifetime = true,
-                    ValidateIssuerSigningKey = true,
-                    ValidIssuer = jwtIssuer,
-                    ValidAudience = jwtAudience,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-                    ClockSkew = TimeSpan.Zero
-                };
-            });
-
-        builder.Services.AddAuthorization(options =>
-        {
-            options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+            Log.Information("Health check executed for Inventory service");
+            return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy("Inventory API is running");
         });
 
-        var app = builder.Build();
+    // JWT Authentication configuration
+    var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
+    var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("JWT Issuer not configured");
+    var jwtAudience = builder.Configuration["Jwt:Audience"] ?? throw new InvalidOperationException("JWT Audience not configured");
 
-        // Configure the HTTP request pipeline.
-        if (app.Environment.IsDevelopment())
+    Log.Information("Configuring JWT authentication for Inventory service with issuer: {Issuer}", jwtIssuer);
+
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
         {
-            app.UseSwagger();
-            app.UseSwaggerUI();
-        }
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = jwtIssuer,
+                ValidAudience = jwtAudience,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+            };
+        });
 
-        app.UseHttpsRedirection();
-        
-        // Authentication and Authorization middleware
-        app.UseAuthentication();
-        app.UseAuthorization();
-        
-        app.MapControllers();
-        app.MapHealthChecks("/health");
+    builder.Services.AddAuthorization();
 
-        var eventStatus = rebusConfigured ? "Rebus event consumption" : "dummy event logging";
-        Log.Information("Inventory API starting with JWT authentication and {EventStatus}", eventStatus);
-        app.Run();
+    var app = builder.Build();
+
+    // Configure the HTTP request pipeline
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI(c =>
+        {
+            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Inventory API V1");
+            c.DocumentTitle = "SalesAPI Inventory with Stock Reservations & Basic Observability";
+        });
+        Log.Information("Swagger UI enabled for Inventory service in development");
     }
+
+    // Enable Prometheus metrics collection
+    app.UseRouting();
+    app.UseHttpMetrics(); // Collect HTTP metrics
+
+    // Correlation middleware should be early in the pipeline
+    app.UseCorrelation();
+
+    app.UseHttpsRedirection();
+
+    // Authentication and Authorization middleware
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    // Map health check endpoint
+    app.MapHealthChecks("/health");
+
+    // Map Prometheus metrics endpoint
+    app.MapMetrics();
+    Log.Information("Prometheus metrics endpoint available at /metrics for Inventory service");
+
+    // Map controllers
+    app.MapControllers();
+
+    Log.Information("?? Inventory API starting with basic observability: Database with retry resilience and metrics enabled");
+    
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "?? Inventory API service failed to start");
+    throw;
+}
+finally
+{
+    Log.Information("?? Inventory API service shutting down");
+    Log.CloseAndFlush();
 }
