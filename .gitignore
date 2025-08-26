@@ -26,10 +26,6 @@ Thumbs.db
 *.mdf
 *.ldf
 
-# Docker
-**/.docker/
-**/docker-compose.*.yml
-
 # Ignore secrets
 secrets.json
 
@@ -63,4 +59,4 @@ coverage/
 !*.json
 !*.md
 !Dockerfile
-!docker-compose.yml
+!docker-compose*.yml

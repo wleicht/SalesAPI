@@ -10,7 +10,7 @@ This comprehensive test documentation suite provides complete coverage of all te
 
 | Document | Purpose | Audience | Content |
 |----------|---------|----------|---------|
-| **[test-documentation.md](./test-documentation.md)** | Main overview and summary | All stakeholders | High-level test suite overview |
+| **[README-tests.md](./README-tests.md)** | Test documentation index | All stakeholders | Navigation and overview |
 | **[test-strategy.md](./test-strategy.md)** | Strategic testing approach | Architects, Leads | Testing philosophy and architecture |
 | **[unit-tests-documentation.md](./unit-tests-documentation.md)** | Detailed unit test coverage | Developers | Unit test specifications |
 | **[integration-tests-documentation.md](./integration-tests-documentation.md)** | Integration test scenarios | Developers, QA | End-to-end test scenarios |
@@ -34,7 +34,7 @@ This comprehensive test documentation suite provides complete coverage of all te
 ## Getting Started
 
 ### For New Team Members
-1. Start with **[test-documentation.md](./test-documentation.md)** for overview
+1. Start with this **README-tests.md** for overview
 2. Read **[test-execution-guide.md](./test-execution-guide.md)** for practical setup
 3. Reference specific test documentation as needed
 
@@ -65,7 +65,6 @@ tests/
 ?   ??? OrderCrudTests.cs        # Order operations (10 tests)
 ?   ??? ProductCrudTests.cs      # Product operations (12 tests)
 ?   ??? SalesApiTests.cs         # Sales endpoints (2 tests)
-?   ??? SimpleReservationTests.cs # Basic reservations (TBD)
 ?   ??? StockReservationTests.cs # Advanced reservations (4 tests)
 ?   ??? endpoint.tests.csproj
 ??? inventory.api.tests/          # 41 inventory unit tests
@@ -231,4 +230,4 @@ tests/
 
 ---
 
-*This documentation represents the current state of the SalesAPI test suite and serves as the authoritative reference for all testing activities within the project.*
+*This documentation represents the current state of the SalesAPI test suite and serves as the authoritative reference for all testing activities within the project.**This documentation represents the current state of the SalesAPI test suite and serves as the authoritative reference for all testing activities within the project.*
