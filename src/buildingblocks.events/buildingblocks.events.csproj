@@ -8,6 +8,12 @@
 
   <ItemGroup>
     <PackageReference Include="MassTransit" Version="8.2.0" />
+    <PackageReference Include="Rebus" Version="6.7.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\buildingblocks.contracts\buildingblocks.contracts.csproj" />
   </ItemGroup>
 
 </Project>

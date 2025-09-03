@@ -1,3 +1,6 @@
+using BuildingBlocks.Events.Domain;
+using System;
+
 namespace BuildingBlocks.Events.Domain
 {
     /// <summary>
@@ -32,7 +35,7 @@ namespace BuildingBlocks.Events.Domain
     /// - Increment version numbers when making breaking schema changes
     /// - Treat events as immutable data structures after creation
     /// </remarks>
-    public abstract class DomainEvent
+    public abstract class DomainEvent : IDomainEvent
     {
         /// <summary>
         /// Globally unique identifier for this specific event instance.
