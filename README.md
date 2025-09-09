@@ -16,7 +16,7 @@ A comprehensive microservices-based e-commerce solution built with .NET 8, featu
 ### One-Command Deployment
 ```bash
 # Start the complete system with observability
-docker compose -f docker-compose-observability-simple.yml up -d
+docker compose -f docker/compose/docker-compose-observability-simple.yml up -d
 
 # Verify all services are running
 docker compose ps
@@ -165,6 +165,147 @@ curl -X POST http://localhost:6000/sales/orders \
 curl http://localhost:6000/sales/orders
 ```
 
+## ?? Project Structure
+
+### Clean and Organized Directory Layout
+```
+SalesAPI/
+??? ?? docker/                          # Docker-related files
+?   ??? ?? compose/                     # Docker Compose files
+?   ?   ??? docker-compose.yml          # Main services configuration
+?   ?   ??? docker-compose-observability-simple.yml # With monitoring
+?   ??? ?? observability/               # Monitoring configurations
+?   ?   ??? prometheus/                 # Prometheus configuration
+?   ??? .dockerignore                   # Docker ignore file
+??? ?? scripts/                         # Management and automation scripts
+?   ??? docker-manage.sh                # Docker management utility
+?   ??? Makefile                        # Make commands
+?   ??? setup.sh                        # Environment setup
+?   ??? cleanup-root.sh                 # Root cleanup utility
+?   ??? start.ps1                       # Start script (PowerShell)
+?   ??? start.sh                        # Start script (Bash)
+?   ??? test-observability*.ps1/.sh     # Observability test scripts
+??? ?? src/                             # Source code
+?   ??? ?? gateway/                     # API Gateway service
+?   ??? ?? inventory.api/               # Inventory microservice
+?   ??? ?? sales.api/                   # Sales microservice
+?   ??? ?? buildingblocks.contracts/    # Shared contracts
+??? ?? tests/                           # Test projects
+??? ?? docs/                            # Documentation
+??? ?? deploy/                          # Deployment configurations
+??? ?? README.md                        # Project documentation
+??? ?? SalesAPI.sln                     # Solution file
+```
+
+### ?? Quick Start
+
+#### Environment Setup
+```bash
+# Clone repository
+git clone https://github.com/wleicht/SalesAPI.git
+cd SalesAPI
+
+# Run setup script
+./scripts/setup.sh
+
+# Start all services
+./scripts/docker-manage.sh start
+```
+
+#### Alternative with Make
+```bash
+# Setup environment
+./scripts/setup.sh
+
+# Start services
+make -C scripts up
+
+# Check status
+make -C scripts status
+```
+
+### ?? Docker Management
+
+#### Using Docker Management Script
+```bash
+# Start all services
+./scripts/docker-manage.sh start
+
+# Stop all services
+./scripts/docker-manage.sh stop
+
+# Check service status
+./scripts/docker-manage.sh status
+
+# View service logs
+./scripts/docker-manage.sh logs-follow
+
+# Run health checks
+./scripts/docker-manage.sh health
+
+# Show service URLs
+./scripts/docker-manage.sh urls
+
+# Run integration tests
+./scripts/docker-manage.sh test
+
+# Clean up resources
+./scripts/docker-manage.sh clean
+
+# Show all commands
+./scripts/docker-manage.sh help
+```
+
+#### Using Make Commands
+```bash
+# Show available commands
+make -C scripts help
+
+# Start services
+make -C scripts up
+
+# Stop services
+make -C scripts down
+
+# View status
+make -C scripts status
+
+# Run tests
+make -C scripts test
+
+# Clean up
+make -C scripts clean
+```
+
+### ?? Service URLs
+
+Once started, services are available at:
+- **Gateway**: http://localhost:6000
+- **Inventory API**: http://localhost:5000  
+- **Sales API**: http://localhost:5001
+- **Prometheus**: http://localhost:9090
+- **RabbitMQ Management**: http://localhost:15672 (admin/admin123)
+
+### Alternative Start Options
+
+#### Using PowerShell Script
+```powershell
+# Start complete system
+./scripts/start.ps1
+
+# Start with observability
+./scripts/test-observability.ps1
+```
+
+#### Using Bash Script  
+```bash
+# Start complete system
+./scripts/start.sh
+
+# Start with observability
+./scripts/test-observability.sh
+```
+
 ## ?? Development
 
 ### Prerequisites
@@ -174,12 +315,24 @@ curl http://localhost:6000/sales/orders
 
 ### Local Development Setup
 ```bash
-# Clone repository
+# Clone and setup
 git clone https://github.com/wleicht/SalesAPI.git
 cd SalesAPI
+./scripts/setup.sh
 
-# Start infrastructure services
-docker compose -f docker-compose.infrastructure.yml up -d
+# Start with observability
+./scripts/docker-manage.sh start
+# or
+make -C scripts observability
+
+# For development mode
+make -C scripts dev
+```
+
+### Running Services Individually
+```bash
+# Start infrastructure only
+./scripts/docker-manage.sh stop-apps
 
 # Run APIs locally
 dotnet run --project src/gateway
@@ -221,13 +374,13 @@ Environment variables and configuration options:
 ### Docker Compose Profiles
 ```bash
 # Development environment
-docker compose up -d
+docker compose -f docker/compose/docker-compose.yml up -d
 
 # Production with monitoring
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+docker compose -f docker/compose/docker-compose.yml -f docker/compose/docker-compose-observability-simple.yml up -d
 
-# Infrastructure only
-docker compose -f docker-compose.infrastructure.yml up -d
+# Using deployment configurations
+./scripts/start.sh production
 ```
 
 ### Environment Configuration

@@ -1,11 +1,16 @@
 #!/bin/bash
 # Docker management utility for SalesAPI
-# Usage: ./docker-manage.sh [command]
+# Usage: ./scripts/docker-manage.sh [command]
 
 set -e
 
+# Get script directory and navigate to project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# Compose files directory
+COMPOSE_DIR="docker/compose"
 
 # Colors for output
 RED='\033[0;31m'
@@ -19,23 +24,23 @@ detect_compose_files() {
     local compose_files=""
     
     # Always include main compose file if it exists
-    if [ -f "docker-compose.yml" ]; then
-        compose_files="-f docker-compose.yml"
+    if [ -f "$COMPOSE_DIR/docker-compose.yml" ]; then
+        compose_files="-f $COMPOSE_DIR/docker-compose.yml"
     fi
     
     # Include infrastructure file for database and rabbitmq
-    if [ -f "docker-compose.infrastructure.yml" ]; then
-        compose_files="${compose_files} -f docker-compose.infrastructure.yml"
+    if [ -f "$COMPOSE_DIR/docker-compose.infrastructure.yml" ]; then
+        compose_files="${compose_files} -f $COMPOSE_DIR/docker-compose.infrastructure.yml"
     fi
     
     # Include observability file for prometheus
-    if [ -f "docker-compose.observability.yml" ]; then
-        compose_files="${compose_files} -f docker-compose.observability.yml"
+    if [ -f "$COMPOSE_DIR/docker-compose.observability.yml" ]; then
+        compose_files="${compose_files} -f $COMPOSE_DIR/docker-compose.observability.yml"
     fi
     
     # Include observability-simple if main observability is not available
-    if [ -f "docker-compose-observability-simple.yml" ] && [ ! -f "docker-compose.observability.yml" ]; then
-        compose_files="${compose_files} -f docker-compose-observability-simple.yml"
+    if [ -f "$COMPOSE_DIR/docker-compose-observability-simple.yml" ] && [ ! -f "$COMPOSE_DIR/docker-compose.observability.yml" ]; then
+        compose_files="${compose_files} -f $COMPOSE_DIR/docker-compose-observability-simple.yml"
     fi
     
     echo "${compose_files}"
@@ -81,12 +86,12 @@ validate_compose() {
         
         # Check each file individually
         for file in docker-compose.yml docker-compose.infrastructure.yml docker-compose.observability.yml docker-compose-observability-simple.yml; do
-            if [ -f "$file" ]; then
-                if docker compose -f "$file" config > /dev/null 2>&1; then
-                    print_status "? $file is valid"
+            if [ -f "$COMPOSE_DIR/$file" ]; then
+                if docker compose -f "$COMPOSE_DIR/$file" config > /dev/null 2>&1; then
+                    print_status "? $COMPOSE_DIR/$file is valid"
                 else
-                    print_error "? $file has errors:"
-                    docker compose -f "$file" config 2>&1 | head -10
+                    print_error "? $COMPOSE_DIR/$file has errors:"
+                    docker compose -f "$COMPOSE_DIR/$file" config 2>&1 | head -10
                 fi
             fi
         done
@@ -156,9 +161,9 @@ stop_services() {
         
         # Try each compose file individually
         for file in docker-compose.yml docker-compose.infrastructure.yml docker-compose.observability.yml docker-compose-observability-simple.yml; do
-            if [ -f "$file" ]; then
+            if [ -f "$COMPOSE_DIR/$file" ]; then
                 print_status "Stopping services from $file..."
-                docker compose -f "$file" down 2>/dev/null || true
+                docker compose -f "$COMPOSE_DIR/$file" down 2>/dev/null || true
             fi
         done
     fi
@@ -178,8 +183,8 @@ stop_apps_only() {
     print_status "Stopping application containers (keeping infrastructure)..."
     
     # Stop only app services
-    if [ -f "docker-compose.yml" ]; then
-        docker compose -f docker-compose.yml down 2>/dev/null || true
+    if [ -f "$COMPOSE_DIR/docker-compose.yml" ]; then
+        docker compose -f "$COMPOSE_DIR/docker-compose.yml" down 2>/dev/null || true
     fi
     
     # Stop specific app containers
@@ -265,8 +270,8 @@ clean_up() {
     
     # Clean using compose files
     for file in docker-compose.yml docker-compose.infrastructure.yml docker-compose.observability.yml docker-compose-observability-simple.yml; do
-        if [ -f "$file" ]; then
-            docker compose -f "$file" down --remove-orphans 2>/dev/null || true
+        if [ -f "$COMPOSE_DIR/$file" ]; then
+            docker compose -f "$COMPOSE_DIR/$file" down --remove-orphans 2>/dev/null || true
         fi
     done
     
@@ -287,8 +292,8 @@ reset_all() {
         
         # Clean using all compose files
         for file in docker-compose.yml docker-compose.infrastructure.yml docker-compose.observability.yml docker-compose-observability-simple.yml; do
-            if [ -f "$file" ]; then
-                docker compose -f "$file" down -v --remove-orphans 2>/dev/null || true
+            if [ -f "$COMPOSE_DIR/$file" ]; then
+                docker compose -f "$COMPOSE_DIR/$file" down -v --remove-orphans 2>/dev/null || true
             fi
         done
         

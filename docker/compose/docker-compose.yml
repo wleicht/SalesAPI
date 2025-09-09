@@ -3,7 +3,7 @@ version: '3.8'
 services:
   inventory:
     build:
-      context: .
+      context: ../..
       dockerfile: src/inventory.api/Dockerfile
     container_name: salesapi-inventory
     restart: unless-stopped
@@ -30,7 +30,7 @@ services:
 
   sales:
     build:
-      context: .
+      context: ../..
       dockerfile: src/sales.api/Dockerfile
     container_name: salesapi-sales
     restart: unless-stopped
@@ -60,7 +60,7 @@ services:
 
   gateway:
     build:
-      context: .
+      context: ../..
       dockerfile: src/gateway/Dockerfile
     container_name: salesapi-gateway
     restart: unless-stopped
