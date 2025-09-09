@@ -78,6 +78,27 @@ namespace SalesApi.Domain.Repositories
         Task<Order?> GetWithItemsAsync(Guid orderId, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Retrieves all orders with pagination support.
+        /// Enables administrative operations and general order management.
+        /// </summary>
+        /// <param name="pageNumber">Page number for pagination (1-based)</param>
+        /// <param name="pageSize">Number of orders per page</param>
+        /// <param name="cancellationToken">Cancellation token for async operation</param>
+        /// <returns>Paginated collection of orders</returns>
+        Task<IEnumerable<Order>> GetPagedAsync(
+            int pageNumber = 1, 
+            int pageSize = 20, 
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Counts the total number of orders in the system.
+        /// Provides general analytics and reporting data.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token for async operation</param>
+        /// <returns>Total number of orders</returns>
+        Task<int> CountAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Retrieves all orders for a specific customer with pagination support.
         /// Enables customer service operations and customer-specific reporting.
         /// </summary>

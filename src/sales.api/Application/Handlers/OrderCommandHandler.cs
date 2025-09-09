@@ -4,11 +4,12 @@ using SalesApi.Domain.Entities;
 using SalesApi.Domain.Services;
 using SalesApi.Domain.Repositories;
 using Microsoft.Extensions.Logging;
+using MediatR;
 
 namespace SalesApi.Application.Handlers
 {
     /// <summary>
-    /// Application service responsible for handling order-related commands.
+    /// MediatR Request Handler responsible for handling order-related commands.
     /// Orchestrates command processing, domain service coordination, and cross-cutting concerns
     /// including validation, logging, and transaction management for order operations.
     /// </summary>
@@ -36,22 +37,22 @@ namespace SalesApi.Application.Handlers
     /// The handler follows Application Service patterns from Domain-Driven Design
     /// and provides clean separation between API controllers and domain logic.
     /// </remarks>
-    public class OrderCommandHandler
+    public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, OrderOperationResultDto>
     {
         private readonly IOrderDomainService _orderDomainService;
         private readonly IOrderRepository _orderRepository;
-        private readonly ILogger<OrderCommandHandler> _logger;
+        private readonly ILogger<CreateOrderCommandHandler> _logger;
 
         /// <summary>
-        /// Initializes a new instance of the OrderCommandHandler.
+        /// Initializes a new instance of the CreateOrderCommandHandler.
         /// </summary>
         /// <param name="orderDomainService">Domain service for order operations</param>
         /// <param name="orderRepository">Repository for order data access</param>
         /// <param name="logger">Logger for operation monitoring and troubleshooting</param>
-        public OrderCommandHandler(
+        public CreateOrderCommandHandler(
             IOrderDomainService orderDomainService,
             IOrderRepository orderRepository,
-            ILogger<OrderCommandHandler> logger)
+            ILogger<CreateOrderCommandHandler> logger)
         {
             _orderDomainService = orderDomainService ?? throw new ArgumentNullException(nameof(orderDomainService));
             _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
@@ -69,13 +70,15 @@ namespace SalesApi.Application.Handlers
         /// <remarks>
         /// Creation Process:
         /// 1. Validate command data and business rules
-        /// 2. Map command to domain service requests
-        /// 3. Execute order creation through domain service
-        /// 4. Handle success and error scenarios
-        /// 5. Return appropriate result with order information
+        /// 2. Enrich order items with product information (name, price)
+        /// 3. Map command to domain service requests
+        /// 4. Execute order creation through domain service
+        /// 5. Handle success and error scenarios
+        /// 6. Return appropriate result with order information
         /// 
         /// Error Handling:
         /// - Command validation errors
+        /// - Product information retrieval errors
         /// - Business rule violations
         /// - Domain service exceptions
         /// - Infrastructure failures
@@ -86,12 +89,12 @@ namespace SalesApi.Application.Handlers
         /// - Error scenarios and exception details
         /// - Business process tracking
         /// </remarks>
-        public async Task<OrderOperationResultDto> HandleAsync(
+        public async Task<OrderOperationResultDto> Handle(
             CreateOrderCommand command, 
             CancellationToken cancellationToken = default)
         {
             _logger.LogInformation(
-                "??? Starting order creation for Customer: {CustomerId} | Items: {ItemCount} | CorrelationId: {CorrelationId}",
+                "?? Starting order creation for Customer: {CustomerId} | Items: {ItemCount} | CorrelationId: {CorrelationId}",
                 command.CustomerId, command.Items.Count, command.CorrelationId);
 
             try
@@ -107,13 +110,13 @@ namespace SalesApi.Application.Handlers
                     return OrderOperationResultDto.ValidationFailure(validationResult.Errors);
                 }
 
-                // Map command to domain service request
+                // Map command to domain service request (product info will be enriched by domain service)
                 var orderItems = command.Items.Select(item => new CreateOrderItemRequest
                 {
                     ProductId = item.ProductId,
-                    ProductName = item.ProductName,
+                    ProductName = item.ProductName, // May be empty - will be enriched
                     Quantity = item.Quantity,
-                    UnitPrice = item.UnitPrice
+                    UnitPrice = item.UnitPrice // May be 0 - will be enriched
                 }).ToList();
 
                 // Execute order creation through domain service
@@ -135,7 +138,7 @@ namespace SalesApi.Application.Handlers
             catch (ArgumentException ex)
             {
                 _logger.LogWarning(ex,
-                    "?? Order creation failed due to invalid argument | Customer: {CustomerId}",
+                    "? Order creation failed due to invalid argument | Customer: {CustomerId}",
                     command.CustomerId);
 
                 return OrderOperationResultDto.Failure(ex.Message, "INVALID_ARGUMENT");
@@ -143,7 +146,7 @@ namespace SalesApi.Application.Handlers
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex,
-                    "?? Order creation failed due to business rule violation | Customer: {CustomerId}",
+                    "? Order creation failed due to business rule violation | Customer: {CustomerId}",
                     command.CustomerId);
 
                 return OrderOperationResultDto.Failure(ex.Message, "BUSINESS_RULE_VIOLATION");
@@ -156,163 +159,6 @@ namespace SalesApi.Application.Handlers
 
                 return OrderOperationResultDto.Failure(
                     "An unexpected error occurred while creating the order", 
-                    "INTERNAL_ERROR");
-            }
-        }
-
-        /// <summary>
-        /// Handles order confirmation with business validation and workflow coordination.
-        /// Processes the transition from pending to confirmed status with appropriate validations.
-        /// </summary>
-        /// <param name="command">Command containing order confirmation data</param>
-        /// <param name="cancellationToken">Cancellation token for async operation</param>
-        /// <returns>Result containing confirmed order or error information</returns>
-        public async Task<OrderOperationResultDto> HandleAsync(
-            ConfirmOrderCommand command, 
-            CancellationToken cancellationToken = default)
-        {
-            _logger.LogInformation(
-                "? Starting order confirmation | OrderId: {OrderId} | ConfirmedBy: {ConfirmedBy}",
-                command.OrderId, command.ConfirmedBy);
-
-            try
-            {
-                // Execute order confirmation through domain service
-                var order = await _orderDomainService.ConfirmOrderAsync(
-                    command.OrderId,
-                    command.ConfirmedBy,
-                    command.CorrelationId,
-                    cancellationToken);
-
-                _logger.LogInformation(
-                    "? Order confirmed successfully | OrderId: {OrderId} | Total: {Total}",
-                    order.Id, order.TotalAmount);
-
-                // Map domain entity to DTO
-                var orderDto = MapOrderToDto(order);
-                return OrderOperationResultDto.Success(orderDto);
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex,
-                    "?? Order confirmation failed | OrderId: {OrderId}",
-                    command.OrderId);
-
-                return OrderOperationResultDto.Failure(ex.Message, "CONFIRMATION_FAILED");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "?? Unexpected error during order confirmation | OrderId: {OrderId}",
-                    command.OrderId);
-
-                return OrderOperationResultDto.Failure(
-                    "An unexpected error occurred while confirming the order", 
-                    "INTERNAL_ERROR");
-            }
-        }
-
-        /// <summary>
-        /// Handles order cancellation with compensation workflow coordination.
-        /// Processes order cancellation including inventory release and customer notification.
-        /// </summary>
-        /// <param name="command">Command containing order cancellation data</param>
-        /// <param name="cancellationToken">Cancellation token for async operation</param>
-        /// <returns>Result containing cancelled order or error information</returns>
-        public async Task<OrderOperationResultDto> HandleAsync(
-            CancelOrderCommand command, 
-            CancellationToken cancellationToken = default)
-        {
-            _logger.LogInformation(
-                "? Starting order cancellation | OrderId: {OrderId} | CancelledBy: {CancelledBy} | Reason: {Reason}",
-                command.OrderId, command.CancelledBy, command.Reason);
-
-            try
-            {
-                // Execute order cancellation through domain service
-                var order = await _orderDomainService.CancelOrderAsync(
-                    command.OrderId,
-                    command.CancelledBy,
-                    command.Reason,
-                    command.CorrelationId,
-                    cancellationToken);
-
-                _logger.LogInformation(
-                    "? Order cancelled successfully | OrderId: {OrderId}",
-                    order.Id);
-
-                // Map domain entity to DTO
-                var orderDto = MapOrderToDto(order);
-                return OrderOperationResultDto.Success(orderDto);
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex,
-                    "?? Order cancellation failed | OrderId: {OrderId}",
-                    command.OrderId);
-
-                return OrderOperationResultDto.Failure(ex.Message, "CANCELLATION_FAILED");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "?? Unexpected error during order cancellation | OrderId: {OrderId}",
-                    command.OrderId);
-
-                return OrderOperationResultDto.Failure(
-                    "An unexpected error occurred while cancelling the order", 
-                    "INTERNAL_ERROR");
-            }
-        }
-
-        /// <summary>
-        /// Handles marking an order as fulfilled after successful completion.
-        /// Finalizes the order lifecycle with appropriate status updates and event publishing.
-        /// </summary>
-        /// <param name="command">Command containing order fulfillment data</param>
-        /// <param name="cancellationToken">Cancellation token for async operation</param>
-        /// <returns>Result containing fulfilled order or error information</returns>
-        public async Task<OrderOperationResultDto> HandleAsync(
-            MarkOrderAsFulfilledCommand command, 
-            CancellationToken cancellationToken = default)
-        {
-            _logger.LogInformation(
-                "?? Starting order fulfillment marking | OrderId: {OrderId} | FulfilledBy: {FulfilledBy}",
-                command.OrderId, command.FulfilledBy);
-
-            try
-            {
-                // Execute order fulfillment through domain service
-                var order = await _orderDomainService.MarkOrderAsFulfilledAsync(
-                    command.OrderId,
-                    command.FulfilledBy,
-                    command.CorrelationId,
-                    cancellationToken);
-
-                _logger.LogInformation(
-                    "? Order marked as fulfilled successfully | OrderId: {OrderId}",
-                    order.Id);
-
-                // Map domain entity to DTO
-                var orderDto = MapOrderToDto(order);
-                return OrderOperationResultDto.Success(orderDto);
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex,
-                    "?? Order fulfillment marking failed | OrderId: {OrderId}",
-                    command.OrderId);
-
-                return OrderOperationResultDto.Failure(ex.Message, "FULFILLMENT_FAILED");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "?? Unexpected error during order fulfillment marking | OrderId: {OrderId}",
-                    command.OrderId);
-
-                return OrderOperationResultDto.Failure(
-                    "An unexpected error occurred while marking order as fulfilled", 
                     "INTERNAL_ERROR");
             }
         }
@@ -387,6 +233,263 @@ namespace SalesApi.Application.Handlers
                 Status = order.Status,
                 TotalAmount = order.TotalAmount,
                 Currency = "USD", // TODO: Get from domain or configuration
+                Items = order.Items.Select(item => new OrderItemDto
+                {
+                    OrderId = item.OrderId,
+                    ProductId = item.ProductId,
+                    ProductName = item.ProductName,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice,
+                    TotalPrice = item.TotalPrice,
+                    Currency = "USD"
+                }).ToList(),
+                CreatedAt = order.CreatedAt,
+                UpdatedAt = order.UpdatedAt ?? order.CreatedAt,
+                CreatedBy = order.CreatedBy ?? string.Empty,
+                UpdatedBy = order.UpdatedBy ?? order.CreatedBy ?? string.Empty
+            };
+        }
+    }
+
+    /// <summary>
+    /// MediatR Request Handler for order confirmation commands.
+    /// </summary>
+    public class ConfirmOrderCommandHandler : IRequestHandler<ConfirmOrderCommand, OrderOperationResultDto>
+    {
+        private readonly IOrderDomainService _orderDomainService;
+        private readonly ILogger<ConfirmOrderCommandHandler> _logger;
+
+        public ConfirmOrderCommandHandler(
+            IOrderDomainService orderDomainService,
+            ILogger<ConfirmOrderCommandHandler> logger)
+        {
+            _orderDomainService = orderDomainService;
+            _logger = logger;
+        }
+
+        public async Task<OrderOperationResultDto> Handle(ConfirmOrderCommand command, CancellationToken cancellationToken)
+        {
+            _logger.LogInformation(
+                "? Starting order confirmation | OrderId: {OrderId} | ConfirmedBy: {ConfirmedBy}",
+                command.OrderId, command.ConfirmedBy);
+
+            try
+            {
+                // Execute order confirmation through domain service
+                var order = await _orderDomainService.ConfirmOrderAsync(
+                    command.OrderId,
+                    command.ConfirmedBy,
+                    command.CorrelationId,
+                    cancellationToken);
+
+                _logger.LogInformation(
+                    "? Order confirmed successfully | OrderId: {OrderId} | Total: {Total}",
+                    order.Id, order.TotalAmount);
+
+                // Map domain entity to DTO
+                var orderDto = MapOrderToDto(order);
+                return OrderOperationResultDto.Success(orderDto);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex,
+                    "? Order confirmation failed | OrderId: {OrderId}",
+                    command.OrderId);
+
+                return OrderOperationResultDto.Failure(ex.Message, "CONFIRMATION_FAILED");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "?? Unexpected error during order confirmation | OrderId: {OrderId}",
+                    command.OrderId);
+
+                return OrderOperationResultDto.Failure(
+                    "An unexpected error occurred while confirming the order", 
+                    "INTERNAL_ERROR");
+            }
+        }
+
+        private static OrderDto MapOrderToDto(Order order)
+        {
+            return new OrderDto
+            {
+                Id = order.Id,
+                CustomerId = order.CustomerId,
+                Status = order.Status,
+                TotalAmount = order.TotalAmount,
+                Currency = "USD",
+                Items = order.Items.Select(item => new OrderItemDto
+                {
+                    ProductId = item.ProductId,
+                    ProductName = item.ProductName,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice,
+                    TotalPrice = item.TotalPrice,
+                    Currency = "USD"
+                }).ToList(),
+                CreatedAt = order.CreatedAt,
+                UpdatedAt = order.UpdatedAt ?? order.CreatedAt,
+                CreatedBy = order.CreatedBy ?? string.Empty,
+                UpdatedBy = order.UpdatedBy ?? order.CreatedBy ?? string.Empty
+            };
+        }
+    }
+
+    /// <summary>
+    /// MediatR Request Handler for order cancellation commands.
+    /// </summary>
+    public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, OrderOperationResultDto>
+    {
+        private readonly IOrderDomainService _orderDomainService;
+        private readonly ILogger<CancelOrderCommandHandler> _logger;
+
+        public CancelOrderCommandHandler(
+            IOrderDomainService orderDomainService,
+            ILogger<CancelOrderCommandHandler> logger)
+        {
+            _orderDomainService = orderDomainService;
+            _logger = logger;
+        }
+
+        public async Task<OrderOperationResultDto> Handle(CancelOrderCommand command, CancellationToken cancellationToken)
+        {
+            _logger.LogInformation(
+                "? Starting order cancellation | OrderId: {OrderId} | CancelledBy: {CancelledBy} | Reason: {Reason}",
+                command.OrderId, command.CancelledBy, command.Reason);
+
+            try
+            {
+                // Execute order cancellation through domain service
+                var order = await _orderDomainService.CancelOrderAsync(
+                    command.OrderId,
+                    command.CancelledBy,
+                    command.Reason,
+                    command.CorrelationId,
+                    cancellationToken);
+
+                _logger.LogInformation(
+                    "? Order cancelled successfully | OrderId: {OrderId}",
+                    order.Id);
+
+                // Map domain entity to DTO
+                var orderDto = MapOrderToDto(order);
+                return OrderOperationResultDto.Success(orderDto);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex,
+                    "? Order cancellation failed | OrderId: {OrderId}",
+                    command.OrderId);
+
+                return OrderOperationResultDto.Failure(ex.Message, "CANCELLATION_FAILED");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "?? Unexpected error during order cancellation | OrderId: {OrderId}",
+                    command.OrderId);
+
+                return OrderOperationResultDto.Failure(
+                    "An unexpected error occurred while cancelling the order", 
+                    "INTERNAL_ERROR");
+            }
+        }
+
+        private static OrderDto MapOrderToDto(Order order)
+        {
+            return new OrderDto
+            {
+                Id = order.Id,
+                CustomerId = order.CustomerId,
+                Status = order.Status,
+                TotalAmount = order.TotalAmount,
+                Currency = "USD",
+                Items = order.Items.Select(item => new OrderItemDto
+                {
+                    ProductId = item.ProductId,
+                    ProductName = item.ProductName,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice,
+                    TotalPrice = item.TotalPrice,
+                    Currency = "USD"
+                }).ToList(),
+                CreatedAt = order.CreatedAt,
+                UpdatedAt = order.UpdatedAt ?? order.CreatedAt,
+                CreatedBy = order.CreatedBy ?? string.Empty,
+                UpdatedBy = order.UpdatedBy ?? order.CreatedBy ?? string.Empty
+            };
+        }
+    }
+
+    /// <summary>
+    /// MediatR Request Handler for order fulfillment commands.
+    /// </summary>
+    public class MarkOrderAsFulfilledCommandHandler : IRequestHandler<MarkOrderAsFulfilledCommand, OrderOperationResultDto>
+    {
+        private readonly IOrderDomainService _orderDomainService;
+        private readonly ILogger<MarkOrderAsFulfilledCommandHandler> _logger;
+
+        public MarkOrderAsFulfilledCommandHandler(
+            IOrderDomainService orderDomainService,
+            ILogger<MarkOrderAsFulfilledCommandHandler> logger)
+        {
+            _orderDomainService = orderDomainService;
+            _logger = logger;
+        }
+
+        public async Task<OrderOperationResultDto> Handle(MarkOrderAsFulfilledCommand command, CancellationToken cancellationToken)
+        {
+            _logger.LogInformation(
+                "?? Starting order fulfillment marking | OrderId: {OrderId} | FulfilledBy: {FulfilledBy}",
+                command.OrderId, command.FulfilledBy);
+
+            try
+            {
+                // Execute order fulfillment through domain service
+                var order = await _orderDomainService.MarkOrderAsFulfilledAsync(
+                    command.OrderId,
+                    command.FulfilledBy,
+                    command.CorrelationId,
+                    cancellationToken);
+
+                _logger.LogInformation(
+                    "? Order marked as fulfilled successfully | OrderId: {OrderId}",
+                    order.Id);
+
+                // Map domain entity to DTO
+                var orderDto = MapOrderToDto(order);
+                return OrderOperationResultDto.Success(orderDto);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex,
+                    "? Order fulfillment marking failed | OrderId: {OrderId}",
+                    command.OrderId);
+
+                return OrderOperationResultDto.Failure(ex.Message, "FULFILLMENT_FAILED");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "?? Unexpected error during order fulfillment marking | OrderId: {OrderId}",
+                    command.OrderId);
+
+                return OrderOperationResultDto.Failure(
+                    "An unexpected error occurred while marking order as fulfilled", 
+                    "INTERNAL_ERROR");
+            }
+        }
+
+        private static OrderDto MapOrderToDto(Order order)
+        {
+            return new OrderDto
+            {
+                Id = order.Id,
+                CustomerId = order.CustomerId,
+                Status = order.Status,
+                TotalAmount = order.TotalAmount,
+                Currency = "USD",
                 Items = order.Items.Select(item => new OrderItemDto
                 {
                     ProductId = item.ProductId,

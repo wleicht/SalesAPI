@@ -1,5 +1,7 @@
 using SalesApi.Domain.Entities;
 using SalesApi.Domain.Services;
+using SalesApi.Application.DTOs;
+using MediatR;
 
 namespace SalesApi.Application.Commands
 {
@@ -32,7 +34,7 @@ namespace SalesApi.Application.Commands
     /// The command serves as the entry point for order creation
     /// and provides a clean contract for application service consumption.
     /// </remarks>
-    public record CreateOrderCommand
+    public record CreateOrderCommand : IRequest<OrderOperationResultDto>
     {
         /// <summary>
         /// Unique identifier of the customer placing the order.
@@ -124,7 +126,7 @@ namespace SalesApi.Application.Commands
     /// - Updates business metrics and reporting
     /// - Triggers customer communication workflows
     /// </remarks>
-    public record ConfirmOrderCommand
+    public record ConfirmOrderCommand : IRequest<OrderOperationResultDto>
     {
         /// <summary>
         /// Unique identifier of the order to confirm.
@@ -158,7 +160,7 @@ namespace SalesApi.Application.Commands
     /// - Confirmed orders: Inventory release and payment processing
     /// - Partial fulfillment: Complex compensation with reversals
     /// </remarks>
-    public record CancelOrderCommand
+    public record CancelOrderCommand : IRequest<OrderOperationResultDto>
     {
         /// <summary>
         /// Unique identifier of the order to cancel.
@@ -192,7 +194,7 @@ namespace SalesApi.Application.Commands
     /// - Triggers customer satisfaction and feedback workflows
     /// - Updates business metrics and performance tracking
     /// </remarks>
-    public record MarkOrderAsFulfilledCommand
+    public record MarkOrderAsFulfilledCommand : IRequest<OrderOperationResultDto>
     {
         /// <summary>
         /// Unique identifier of the order to mark as fulfilled.

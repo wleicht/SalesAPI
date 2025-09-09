@@ -456,5 +456,68 @@ namespace SalesApi.Infrastructure.Repositories
                 throw;
             }
         }
+
+        /// <summary>
+        /// Retrieves all orders with pagination support.
+        /// Enables administrative operations and general order management.
+        /// </summary>
+        /// <param name="pageNumber">Page number for pagination (1-based)</param>
+        /// <param name="pageSize">Number of orders per page</param>
+        /// <param name="cancellationToken">Cancellation token for async operation</param>
+        /// <returns>Paginated collection of orders</returns>
+        public async Task<IEnumerable<Order>> GetPagedAsync(
+            int pageNumber = 1, 
+            int pageSize = 20, 
+            CancellationToken cancellationToken = default)
+        {
+            _logger.LogDebug("?? Retrieving paged orders | Page: {Page} | PageSize: {PageSize}", 
+                pageNumber, pageSize);
+
+            try
+            {
+                var orders = await _context.Orders
+                    .Include(o => o.Items)
+                    .OrderByDescending(o => o.CreatedAt)
+                    .Skip((pageNumber - 1) * pageSize)
+                    .Take(pageSize)
+                    .AsNoTracking()
+                    .ToListAsync(cancellationToken);
+
+                _logger.LogDebug("? Paged orders retrieved | Page: {Page} | Count: {Count}", 
+                    pageNumber, orders.Count);
+
+                return orders;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "?? Error retrieving paged orders | Page: {Page}", pageNumber);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Counts the total number of orders in the system.
+        /// Provides general analytics and reporting data.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token for async operation</param>
+        /// <returns>Total number of orders</returns>
+        public async Task<int> CountAsync(CancellationToken cancellationToken = default)
+        {
+            _logger.LogDebug("?? Counting total orders");
+
+            try
+            {
+                var count = await _context.Orders.CountAsync(cancellationToken);
+
+                _logger.LogDebug("? Total order count retrieved | Count: {Count}", count);
+
+                return count;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "?? Error counting total orders");
+                throw;
+            }
+        }
     }
 }

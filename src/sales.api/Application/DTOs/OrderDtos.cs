@@ -98,6 +98,11 @@ namespace SalesApi.Application.DTOs
     public class OrderItemDto
     {
         /// <summary>
+        /// Identifier of the order this item belongs to.
+        /// </summary>
+        public Guid OrderId { get; set; }
+
+        /// <summary>
         /// Identifier of the product being ordered.
         /// </summary>
         public Guid ProductId { get; set; }
@@ -372,6 +377,6 @@ namespace SalesApi.Application.DTOs
         /// Creates a validation failure result.
         /// </summary>
         public static OrderOperationResultDto ValidationFailure(IEnumerable<string> errors) => 
-            new() { IsSuccess = false, ValidationErrors = errors.ToList() };
+            new() { IsSuccess = false, ValidationErrors = errors.ToList(), ErrorCode = "VALIDATION_FAILED" };
     }
 }

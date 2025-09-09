@@ -1,5 +1,7 @@
 using SalesApi.Domain.Entities;
 using SalesApi.Domain.ValueObjects;
+using SalesApi.Application.DTOs;
+using MediatR;
 
 namespace SalesApi.Application.Queries
 {
@@ -28,7 +30,7 @@ namespace SalesApi.Application.Queries
     /// - Clear data access patterns
     /// - Consistent query interface design
     /// </remarks>
-    public record GetOrderByIdQuery
+    public record GetOrderByIdQuery : IRequest<OrderDto?>
     {
         /// <summary>
         /// Unique identifier of the order to retrieve.
@@ -53,7 +55,7 @@ namespace SalesApi.Application.Queries
     /// - Ordered by creation date for relevance
     /// - Supports customer service workflows
     /// </remarks>
-    public record GetOrdersByCustomerQuery
+    public record GetOrdersByCustomerQuery : IRequest<PagedOrderResultDto>
     {
         /// <summary>
         /// Unique identifier of the customer whose orders to retrieve.
@@ -87,7 +89,7 @@ namespace SalesApi.Application.Queries
     /// - Order pipeline visibility
     /// - Performance metrics and analytics
     /// </remarks>
-    public record GetOrdersByStatusQuery
+    public record GetOrdersByStatusQuery : IRequest<PagedOrderResultDto>
     {
         /// <summary>
         /// Order status to filter by.
@@ -116,7 +118,7 @@ namespace SalesApi.Application.Queries
     /// - Performance trending and forecasting
     /// - Compliance and audit reporting
     /// </remarks>
-    public record GetOrdersByDateRangeQuery
+    public record GetOrdersByDateRangeQuery : IRequest<PagedOrderResultDto>
     {
         /// <summary>
         /// Start date for the range (inclusive).
@@ -155,7 +157,7 @@ namespace SalesApi.Application.Queries
     /// - Trend analysis and forecasting
     /// - Executive reporting and dashboards
     /// </remarks>
-    public record GetOrderStatisticsQuery
+    public record GetOrderStatisticsQuery : IRequest<List<OrderStatisticsDto>>
     {
         /// <summary>
         /// Start date for statistics calculation.
@@ -176,6 +178,23 @@ namespace SalesApi.Application.Queries
         /// Grouping period for time-based statistics.
         /// </summary>
         public StatisticsPeriod GroupBy { get; init; } = StatisticsPeriod.Day;
+    }
+
+    /// <summary>
+    /// Represents a query to get all orders with pagination.
+    /// Supports general order management and administrative scenarios.
+    /// </summary>
+    public record GetOrdersQuery : IRequest<PagedOrderResultDto>
+    {
+        /// <summary>
+        /// Page number for pagination (1-based).
+        /// </summary>
+        public int PageNumber { get; init; } = 1;
+
+        /// <summary>
+        /// Number of orders per page.
+        /// </summary>
+        public int PageSize { get; init; } = 20;
     }
 
     /// <summary>

@@ -3,6 +3,10 @@ using SalesApi.Persistence;
 using SalesApi.Services;
 using SalesApi.Middleware;
 using SalesAPI.Services;
+using SalesApi.Domain.Repositories;
+using SalesApi.Domain.Services;
+using SalesApi.Infrastructure.Repositories;
+using SalesApi.Infrastructure.Services;
 using BuildingBlocks.Events.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +16,7 @@ using Prometheus;
 using Rebus.ServiceProvider;
 using Rebus.Config;
 using Rebus.RabbitMq;
+using MediatR;
 
 /// <summary>
 /// Main startup class for the Sales API with basic observability and event-driven architecture.
@@ -118,6 +123,16 @@ try
         });
 
     builder.Services.AddAuthorization();
+
+    // Register domain services and repositories
+    builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+    builder.Services.AddScoped<IOrderDomainService, OrderDomainService>();
+
+    // Register MediatR for CQRS pattern
+    builder.Services.AddMediatR(cfg => 
+    {
+        cfg.RegisterServicesFromAssembly(typeof(Program).Assembly);
+    });
 
     // Configure HTTP clients with correlation propagation
     var inventoryApiUrl = builder.Configuration["Services:InventoryApi"] ?? "http://localhost:5000";
