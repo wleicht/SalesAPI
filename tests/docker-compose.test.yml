@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # SQL Server para testes de integração
+  test-database:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: salesapi-test-database
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=Test123!@#Strong
+      - MSSQL_PID=Express
+    ports:
+      - "1434:1433"
+    volumes:
+      - test-db-data:/var/opt/mssql
+    networks:
+      - salesapi-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P Test123!@#Strong -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # RabbitMQ para testes de messaging
+  test-rabbitmq:
+    image: rabbitmq:3-management
+    container_name: salesapi-test-rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=testuser
+      - RABBITMQ_DEFAULT_PASS=testpass123
+      - RABBITMQ_DEFAULT_VHOST=/test
+    ports:
+      - "5673:5672"   # AMQP port
+      - "15673:15672" # Management UI port
+    volumes:
+      - test-rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - salesapi-test-network
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  # Redis para testes de cache (opcional)
+  test-redis:
+    image: redis:7-alpine
+    container_name: salesapi-test-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - test-redis-data:/data
+    networks:
+      - salesapi-test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Jaeger para testes de observabilidade (opcional)
+  test-jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: salesapi-test-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "14269:14268"  # Jaeger HTTP
+      - "16687:16686"  # Jaeger UI
+    networks:
+      - salesapi-test-network
+
+volumes:
+  test-db-data:
+  test-rabbitmq-data:
+  test-redis-data:
+
+networks:
+  salesapi-test-network:
+    driver: bridge
+    name: salesapi-test-network

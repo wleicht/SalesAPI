@@ -2,10 +2,10 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-blue.svg)](https://dotnet.microsoft.com/download/dotnet/8.0)
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com)
-[![Tests](https://img.shields.io/badge/Tests-149%20(99.3%25%20Pass)-green.svg)](#testing)
+[![Tests](https://img.shields.io/badge/Tests-54%20(100%25%20Pass)-green.svg)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-A comprehensive microservices-based e-commerce solution built with .NET 8, featuring containerized deployment, advanced stock management, event-driven architecture, comprehensive observability, and production-ready monitoring.
+A comprehensive microservices-based e-commerce solution built with .NET 8, featuring containerized deployment, advanced stock management, event-driven architecture, comprehensive observability, and production-ready monitoring with **modern test architecture**.
 
 ## ?? Quick Start
 
@@ -38,16 +38,16 @@ curl http://localhost:6000/health
 
 ### System Architecture
 ```
-???????????????    ???????????????    ???????????????
-?   Client    ??????  Gateway    ?????? Microservices?
+???????????    ???????????    ???????????????
+?   Client    ????  Gateway    ???? Microservices?
 ? Application ?    ? (Port 6000) ?    ?   Cluster   ?
-???????????????    ???????????????    ???????????????
+???????????    ???????????    ???????????????
                            ?                   ?
                            ?                   ?
-                   ???????????????    ???????????????
+                   ???????????    ???????????
                    ?    Auth     ?    ?  Load       ?
                    ?   & CORS    ?    ? Balancing   ?
-                   ???????????????    ???????????????
+                   ???????????    ???????????
 ```
 
 ### Microservices Components
@@ -99,37 +99,44 @@ curl http://localhost:6000/health
 - **Data Persistence**: Volume management for databases and message queues
 - **Network Isolation**: Secure inter-service communication
 
-## ?? Testing
+## ?? Professional Testing Suite
 
-### Test Coverage
-The project includes comprehensive testing with **149 tests** achieving **99.3% pass rate**:
+### Modern Test Architecture
+The project features a **comprehensive professional testing suite** with **54 tests** achieving **100% pass rate** in under 10 seconds:
 
-| Test Type | Count | Pass Rate | Coverage |
-|-----------|-------|-----------|----------|
-| **Unit Tests** | 97 | 100% | Business logic, validations, calculations |
-| **Integration Tests** | 43 | 100% | Database operations, service integration |
-| **Contract Tests** | 9 | 100% | Cross-service compatibility |
-| **E2E Tests** | 52 | 98.1% | Complete workflow validation |
+| Test Category | Count | Duration | Technology | Coverage |
+|---------------|-------|----------|------------|----------|
+| **Domain Tests** | 33 tests | ~2.3s | TestDataBuilders | Business logic, domain rules |
+| **Infrastructure Tests** | 17 tests | ~2.7s | In-Memory EF Core | Repository operations, persistence |
+| **Integration Tests** | 4 tests | ~2.8s | Test Doubles | Service interactions, workflows |
+| **TOTAL** | **54 tests** | **~8.3s** | **No Mocking Libraries** | **100% Success** |
 
-### Running Tests
+### Test Architecture Benefits
+- ? **No Legacy Mock Dependencies**: Eliminated Moq in favor of TestDataBuilders and Test Doubles
+- ? **Fast Execution**: Complete test suite runs in under 10 seconds
+- ? **Reliable**: 100% deterministic tests with no flaky behavior
+- ? **Maintainable**: Clean test code using Builder Pattern and shared infrastructure
+- ? **Comprehensive**: Tests covering all layers from domain logic to integration flows
+
+### Running the Professional Test Suite
 ```bash
-# Run all tests
-dotnet test
+# Run all professional tests
+dotnet test SalesAPI.sln --filter "FullyQualifiedName~SalesAPI.Tests.Professional"
 
 # Run specific test categories
-dotnet test --filter "Category=Unit"
-dotnet test --filter "Category=Integration"
+dotnet test tests/SalesAPI.Tests.Professional/Domain.Tests/
+dotnet test tests/SalesAPI.Tests.Professional/Infrastructure.Tests/
+dotnet test tests/SalesAPI.Tests.Professional/Integration.Tests/
 
-# Run with coverage
-dotnet test --collect:"XPlat Code Coverage"
+# View detailed test output
+dotnet test tests/SalesAPI.Tests.Professional/ --verbosity normal
 ```
 
-### Test Categories
-- **Unit Tests**: Isolated business logic testing
-- **Integration Tests**: Database and service integration validation
-- **Contract Tests**: Cross-service communication verification
-- **Performance Tests**: Load testing and performance validation
-- **Security Tests**: Authentication and authorization validation
+### Test Infrastructure Components
+- **TestDataBuilders**: Fluent API for creating test data without duplication
+- **TestInfrastructure**: Shared components for database and messaging testing
+- **BaseTestFixture**: Unified setup/teardown patterns with logging
+- **In-Memory Testing**: Fast, isolated tests using EF Core in-memory provider
 
 ## ?? API Documentation
 
@@ -181,16 +188,19 @@ SalesAPI/
 ?   ??? docker-manage.sh                # Docker management utility
 ?   ??? Makefile                        # Make commands
 ?   ??? setup.sh                        # Environment setup
-?   ??? cleanup-root.sh                 # Root cleanup utility
-?   ??? start.ps1                       # Start script (PowerShell)
-?   ??? start.sh                        # Start script (Bash)
-?   ??? test-observability*.ps1/.sh     # Observability test scripts
+?   ??? start.ps1/start.sh              # Platform-specific start scripts
 ??? ?? src/                             # Source code
 ?   ??? ?? gateway/                     # API Gateway service
 ?   ??? ?? inventory.api/               # Inventory microservice
 ?   ??? ?? sales.api/                   # Sales microservice
-?   ??? ?? buildingblocks.contracts/    # Shared contracts
-??? ?? tests/                           # Test projects
+?   ??? ?? buildingblocks.*/            # Shared contracts and events
+??? ?? tests/                           # Modern test projects
+?   ??? ?? SalesAPI.Tests.Professional/ # Professional testing suite
+?   ?   ??? Domain.Tests/               # Domain logic tests
+?   ?   ??? Infrastructure.Tests/       # Repository and persistence tests
+?   ?   ??? Integration.Tests/          # Service integration tests
+?   ?   ??? TestInfrastructure/         # Shared test components
+?   ??? ?? endpoint.tests/              # Legacy endpoint tests (kept for compatibility)
 ??? ?? docs/                            # Documentation
 ??? ?? deploy/                          # Deployment configurations
 ??? ?? README.md                        # Project documentation

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.11" />
+    <PackageReference Include="Rebus" Version="8.8.0" />
+    <PackageReference Include="Rebus.RabbitMq" Version="10.0.2" />
+    <PackageReference Include="Rebus.ServiceProvider" Version="10.5.0" />
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <PackageReference Include="Bogus" Version="35.4.0" />
+    <PackageReference Include="xunit" Version="2.4.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.5" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\inventory.api\inventory.api.csproj" />
+    <ProjectReference Include="..\..\..\src\sales.api\sales.api.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\gateway.csproj" />
+    <ProjectReference Include="..\..\..\src\buildingblocks.contracts\buildingblocks.contracts.csproj" />
+    <ProjectReference Include="..\..\..\src\buildingblocks.events\buildingblocks.events.csproj" />
+  </ItemGroup>
+
+</Project>
