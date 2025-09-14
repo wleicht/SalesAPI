@@ -1,15 +1,15 @@
 #!/bin/bash
 
-echo "?? Executando Suite de Testes Profissionais Consolidada - SalesAPI"
-echo "================================================================="
+echo "?? Executando Suite de Testes Profissionais CORE (Sem Dependências Externas)"
+echo "========================================================================="
 echo ""
 
 # Função para exibir separador
 separator() {
-    echo "================================================================="
+    echo "========================================================================="
 }
 
-# Função para exibir sucesso/erro
+# Função para verificar resultado
 check_result() {
     if [ $? -eq 0 ]; then
         echo "? $1 - SUCESSO"
@@ -19,70 +19,67 @@ check_result() {
     fi
 }
 
-echo "?? Estrutura Consolidada:"
+echo "?? Suite Core Consolidada (Independente de Serviços):"
 echo "- Domain Tests (33 testes)      - Lógica de negócio pura"
 echo "- Infrastructure Tests (17 testes) - Persistência e messaging"  
 echo "- Integration Tests (4 testes)   - Fluxos entre componentes"
 echo "- Contract Tests (9 testes)      - Compatibilidade de APIs"
-echo "- Endpoint E2E Tests (52 testes) - Cenários completos"
+echo ""
+echo "?? Nota: Testes de Endpoint (E2E) requerem serviços rodando (docker-compose up)"
 echo ""
 separator
 
 # 1. Domain Tests (mais rápidos - executar primeiro)
 echo "?? Executando Domain Tests (Unit Tests)..."
-dotnet test tests/SalesAPI.Tests.Professional/Domain.Tests/ --verbosity minimal --no-build
+dotnet test "tests/SalesAPI.Tests.Professional/Domain.Tests/" --verbosity minimal --no-build
 check_result "Domain Tests"
 echo ""
 
 # 2. Infrastructure Tests
 echo "??? Executando Infrastructure Tests..."
-dotnet test tests/SalesAPI.Tests.Professional/Infrastructure.Tests/ --verbosity minimal --no-build
+dotnet test "tests/SalesAPI.Tests.Professional/Infrastructure.Tests/" --verbosity minimal --no-build
 check_result "Infrastructure Tests"
 echo ""
 
 # 3. Integration Tests (Professional)
 echo "?? Executando Integration Tests (Professional)..."
-dotnet test tests/SalesAPI.Tests.Professional/Integration.Tests/ --verbosity minimal --no-build
+dotnet test "tests/SalesAPI.Tests.Professional/Integration.Tests/" --verbosity minimal --no-build
 check_result "Integration Tests"
 echo ""
 
 # 4. Contract Tests
 echo "?? Executando Contract Tests..."
-dotnet test tests/contracts.tests/ --verbosity minimal --no-build
+dotnet test "tests/contracts.tests/" --verbosity minimal --no-build
 check_result "Contract Tests"
 echo ""
 
-# 5. Endpoint E2E Tests (requer serviços rodando)
-echo "?? Executando Endpoint E2E Tests..."
-echo "   (Nota: Requer serviços rodando - docker-compose up)"
-dotnet test tests/endpoint.tests/ --verbosity minimal --no-build
-check_result "Endpoint E2E Tests"
-echo ""
-
 separator
-echo "?? Executando Suite Completa Consolidada..."
-dotnet test --configuration Release --verbosity minimal
+echo "?? Executando Suite Core Consolidada (Somente testes independentes)..."
+
+# Executar apenas os testes core (sem endpoint que requerem serviços)
+dotnet test "tests/SalesAPI.Tests.Professional/Domain.Tests/" "tests/SalesAPI.Tests.Professional/Infrastructure.Tests/" "tests/SalesAPI.Tests.Professional/Integration.Tests/" "tests/contracts.tests/" --verbosity minimal --no-build
 
 if [ $? -eq 0 ]; then
     echo ""
     separator
-    echo "?? SUITE DE TESTES PROFISSIONAIS CONSOLIDADA - SUCESSO TOTAL!"
+    echo "?? SUITE DE TESTES PROFISSIONAIS CORE - SUCESSO TOTAL!"
     echo ""
-    echo "?? Resumo da Execução:"
+    echo "?? Resumo da Execução (Testes Independentes):"
     echo "? Domain Tests: 33 testes (lógica de negócio)"
     echo "? Infrastructure Tests: 17 testes (persistência/messaging)"  
     echo "? Integration Tests: 4 testes (fluxos profissionais)"
     echo "? Contract Tests: 9 testes (compatibilidade APIs)"
-    echo "? Endpoint E2E Tests: 52 testes (cenários completos)"
     echo ""
-    echo "?? Total: 115 testes de alta qualidade"
+    echo "?? Total Core: 63 testes de alta qualidade"
     echo "? Arquitetura profissional consolidada"
     echo "?? Zero duplicação, máxima eficiência"
+    echo ""
+    echo "?? Para executar testes E2E: inicie os serviços com docker-compose up"
     echo ""
     separator
 else
     echo ""
-    echo "? FALHA NA SUITE DE TESTES"
+    echo "? FALHA NA SUITE DE TESTES CORE"
     echo "   Verifique os logs acima para identificar problemas"
     exit 1
 fi
