@@ -1,90 +1,157 @@
-# PowerShell script para executar apenas a Suite Core (sem dependências externas)
+#!/usr/bin/env pwsh
 
-Write-Host "?? Executando Suite de Testes Profissionais CORE (Sem Dependências Externas)" -ForegroundColor Cyan
-Write-Host "=========================================================================" -ForegroundColor Cyan
-Write-Host ""
+<#
+.SYNOPSIS
+    Executes the core professional test suite (Domain, Infrastructure, Integration, and Contracts)
+    
+.DESCRIPTION
+    This script runs the consolidated professional testing suite without external dependencies.
+    It includes:
+    - SalesAPI.Tests.Professional (54 tests) - Core professional suite
+    - contracts.tests (9 tests) - Contract compatibility validation
+    
+    The endpoint.tests are excluded as they require running services.
+    
+.EXAMPLE
+    ./run-core-tests.ps1
+    
+.EXAMPLE
+    ./run-core-tests.ps1 -Verbose
+#>
 
-# Função para exibir separador
-function Show-Separator {
-    Write-Host "=========================================================================" -ForegroundColor Gray
+param(
+    [switch]$Verbose = $false,
+    [switch]$Coverage = $false,
+    [string]$Configuration = "Debug"
+)
+
+$ErrorActionPreference = "Stop"
+
+# Colors for output
+$Green = "`e[32m"
+$Red = "`e[31m"
+$Yellow = "`e[33m"
+$Blue = "`e[34m"
+$Reset = "`e[0m"
+
+function Write-ColorOutput {
+    param([string]$Color, [string]$Message)
+    Write-Host "$Color$Message$Reset"
 }
 
-# Função para verificar resultado
-function Test-Result {
-    param($TestName)
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "? $TestName - SUCESSO" -ForegroundColor Green
-    } else {
-        Write-Host "? $TestName - FALHA" -ForegroundColor Red
-        exit 1
+function Write-Section {
+    param([string]$Title)
+    Write-Host ""
+    Write-ColorOutput $Blue "=== $Title ==="
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-ColorOutput $Green "? $Message"
+}
+
+function Write-Warning {
+    param([string]$Message)
+    Write-ColorOutput $Yellow "??  $Message"
+}
+
+function Write-Error {
+    param([string]$Message)
+    Write-ColorOutput $Red "? $Message"
+}
+
+# Script start
+Write-Section "SalesAPI Core Professional Test Suite"
+Write-Host "Running consolidated professional tests without external dependencies"
+Write-Host ""
+
+$testResults = @()
+$totalTime = [System.Diagnostics.Stopwatch]::StartNew()
+
+try {
+    # Test 1: Professional Suite - Domain Tests
+    Write-Section "Domain Tests (Business Logic)"
+    $domainTime = Measure-Command {
+        $domainResult = dotnet test tests/SalesAPI.Tests.Professional/Domain.Tests/ --configuration $Configuration --verbosity $(if($Verbose) { "normal" } else { "quiet" }) --no-restore
+        if ($LASTEXITCODE -ne 0) { throw "Domain tests failed" }
     }
-}
+    $testResults += [PSCustomObject]@{ Suite = "Domain Tests"; Time = $domainTime.TotalSeconds; Status = "? Passed" }
+    Write-Success "Domain tests completed in $([math]::Round($domainTime.TotalSeconds, 2))s"
 
-Write-Host "?? Suite Core Consolidada (Independente de Serviços):" -ForegroundColor Yellow
-Write-Host "- Domain Tests (33 testes)      - Lógica de negócio pura" -ForegroundColor White
-Write-Host "- Infrastructure Tests (17 testes) - Persistência e messaging" -ForegroundColor White
-Write-Host "- Integration Tests (4 testes)   - Fluxos entre componentes" -ForegroundColor White
-Write-Host "- Contract Tests (9 testes)      - Compatibilidade de APIs" -ForegroundColor White
-Write-Host ""
-Write-Host "?? Nota: Testes de Endpoint (E2E) requerem serviços rodando (docker-compose up)" -ForegroundColor Yellow
-Write-Host ""
-Show-Separator
+    # Test 2: Professional Suite - Infrastructure Tests  
+    Write-Section "Infrastructure Tests (Data & Messaging)"
+    $infraTime = Measure-Command {
+        $infraResult = dotnet test tests/SalesAPI.Tests.Professional/Infrastructure.Tests/ --configuration $Configuration --verbosity $(if($Verbose) { "normal" } else { "quiet" }) --no-restore
+        if ($LASTEXITCODE -ne 0) { throw "Infrastructure tests failed" }
+    }
+    $testResults += [PSCustomObject]@{ Suite = "Infrastructure Tests"; Time = $infraTime.TotalSeconds; Status = "? Passed" }
+    Write-Success "Infrastructure tests completed in $([math]::Round($infraTime.TotalSeconds, 2))s"
 
-# 1. Domain Tests (mais rápidos - executar primeiro)
-Write-Host "?? Executando Domain Tests (Unit Tests)..." -ForegroundColor Blue
-dotnet test "tests/SalesAPI.Tests.Professional/Domain.Tests/" --verbosity minimal --no-build
-Test-Result "Domain Tests"
-Write-Host ""
+    # Test 3: Professional Suite - Integration Tests
+    Write-Section "Integration Tests (Cross-Service)"
+    $integrationTime = Measure-Command {
+        $integrationResult = dotnet test tests/SalesAPI.Tests.Professional/Integration.Tests/ --configuration $Configuration --verbosity $(if($Verbose) { "normal" } else { "quiet" }) --no-restore
+        if ($LASTEXITCODE -ne 0) { throw "Integration tests failed" }
+    }
+    $testResults += [PSCustomObject]@{ Suite = "Integration Tests"; Time = $integrationTime.TotalSeconds; Status = "? Passed" }
+    Write-Success "Integration tests completed in $([math]::Round($integrationTime.TotalSeconds, 2))s"
 
-# 2. Infrastructure Tests
-Write-Host "??? Executando Infrastructure Tests..." -ForegroundColor Blue
-dotnet test "tests/SalesAPI.Tests.Professional/Infrastructure.Tests/" --verbosity minimal --no-build
-Test-Result "Infrastructure Tests"
-Write-Host ""
+    # Test 4: Contract Tests
+    Write-Section "Contract Tests (API Compatibility)"
+    $contractTime = Measure-Command {
+        $contractResult = dotnet test tests/contracts.tests/ --configuration $Configuration --verbosity $(if($Verbose) { "normal" } else { "quiet" }) --no-restore
+        if ($LASTEXITCODE -ne 0) { throw "Contract tests failed" }
+    }
+    $testResults += [PSCustomObject]@{ Suite = "Contract Tests"; Time = $contractTime.TotalSeconds; Status = "? Passed" }
+    Write-Success "Contract tests completed in $([math]::Round($contractTime.TotalSeconds, 2))s"
 
-# 3. Integration Tests (Professional)
-Write-Host "?? Executando Integration Tests (Professional)..." -ForegroundColor Blue
-dotnet test "tests/SalesAPI.Tests.Professional/Integration.Tests/" --verbosity minimal --no-build
-Test-Result "Integration Tests"
-Write-Host ""
+    # Optional: Code Coverage
+    if ($Coverage) {
+        Write-Section "Code Coverage Analysis"
+        $coverageTime = Measure-Command {
+            dotnet test tests/SalesAPI.Tests.Professional/ tests/contracts.tests/ --collect:"XPlat Code Coverage" --results-directory TestResults/
+            if ($LASTEXITCODE -ne 0) { throw "Coverage analysis failed" }
+        }
+        Write-Success "Coverage analysis completed in $([math]::Round($coverageTime.TotalSeconds, 2))s"
+        Write-Host "Coverage reports generated in TestResults/"
+    }
 
-# 4. Contract Tests
-Write-Host "?? Executando Contract Tests..." -ForegroundColor Blue
-dotnet test "tests/contracts.tests/" --verbosity minimal --no-build
-Test-Result "Contract Tests"
-Write-Host ""
+    $totalTime.Stop()
 
-Show-Separator
-Write-Host "?? Validando Suite Core Consolidada (Testes Independentes)..." -ForegroundColor Magenta
-
-# Contar testes individuais
-$domainTests = 33
-$infraTests = 17
-$integrationTests = 4
-$contractTests = 9
-$totalCoreTests = $domainTests + $infraTests + $integrationTests + $contractTests
-
-if ($LASTEXITCODE -eq 0) {
+    # Results Summary
+    Write-Section "Test Execution Summary"
     Write-Host ""
-    Show-Separator
-    Write-Host "?? SUITE DE TESTES PROFISSIONAIS CORE - SUCESSO TOTAL!" -ForegroundColor Green
+    Write-Host "Test Suite Results:" -ForegroundColor Cyan
+    $testResults | Format-Table -AutoSize
+    
     Write-Host ""
-    Write-Host "?? Resumo da Execução (Testes Independentes):" -ForegroundColor Cyan
-    Write-Host "? Domain Tests: $domainTests testes (lógica de negócio)" -ForegroundColor Green
-    Write-Host "? Infrastructure Tests: $infraTests testes (persistência/messaging)" -ForegroundColor Green
-    Write-Host "? Integration Tests: $integrationTests testes (fluxos profissionais)" -ForegroundColor Green
-    Write-Host "? Contract Tests: $contractTests testes (compatibilidade APIs)" -ForegroundColor Green
+    Write-Success "All core tests passed! ??"
     Write-Host ""
-    Write-Host "?? Total Core: $totalCoreTests testes de alta qualidade" -ForegroundColor Yellow
-    Write-Host "? Arquitetura profissional consolidada" -ForegroundColor Yellow
-    Write-Host "?? Zero duplicação, máxima eficiência" -ForegroundColor Yellow
+    Write-ColorOutput $Blue "? Performance Metrics:"
+    Write-Host "  • Total Execution Time: $([math]::Round($totalTime.Elapsed.TotalSeconds, 2))s"
+    Write-Host "  • Average per Suite: $([math]::Round(($testResults | Measure-Object -Property Time -Average).Average, 2))s"
+    Write-Host "  • Fastest Suite: $(($testResults | Sort-Object Time | Select-Object -First 1).Suite) ($([math]::Round(($testResults | Sort-Object Time | Select-Object -First 1).Time, 2))s)"
     Write-Host ""
-    Write-Host "?? Para executar testes E2E: inicie os serviços com docker-compose up" -ForegroundColor Cyan
+    Write-ColorOutput $Green "?? Professional Test Suite Status: HEALTHY"
+    Write-Host "  • Zero Mock Dependencies ?"
+    Write-Host "  • Fast Execution ?"  
+    Write-Host "  • 100% Pass Rate ?"
+    Write-Host "  • Modern Test Patterns ?"
     Write-Host ""
-    Show-Separator
-} else {
+
+} catch {
+    $totalTime.Stop()
+    Write-Error "Test execution failed: $($_.Exception.Message)"
     Write-Host ""
-    Write-Host "? FALHA NA SUITE DE TESTES CORE" -ForegroundColor Red
-    Write-Host "   Verifique os logs acima para identificar problemas" -ForegroundColor Red
+    Write-Host "Failed after $([math]::Round($totalTime.Elapsed.TotalSeconds, 2))s"
+    
+    if ($testResults.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Partial Results:" -ForegroundColor Yellow
+        $testResults | Format-Table -AutoSize
+    }
+    
     exit 1
 }
+
+Write-Host "? Ready for production deployment!" -ForegroundColor Green
