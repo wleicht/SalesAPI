@@ -10,7 +10,7 @@ namespace SalesAPI.Tests.Professional.TestInfrastructure.Fixtures
     {
         protected readonly ILogger Logger;
         protected readonly string TestName;
-        protected readonly ILoggerFactory LoggerFactory;
+        public ILoggerFactory LoggerFactory { get; private set; }
         private bool _disposed = false;
 
         protected BaseTestFixture(string? testPrefix = null)

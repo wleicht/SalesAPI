@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using SalesApi.Infrastructure.Data;
+using InventoryApi.Persistence;
 using SalesAPI.Tests.Professional.TestInfrastructure.Factories;
 
 namespace SalesAPI.Tests.Professional.TestInfrastructure.Database
@@ -21,6 +23,26 @@ namespace SalesAPI.Tests.Professional.TestInfrastructure.Database
         protected override DbContext CreateInternal(string testName)
         {
             throw new NotSupportedException("Use CreateContextAsync<T> or CreateInMemoryContext<T> instead");
+        }
+
+        /// <summary>
+        /// Creates a Sales database context for testing using in-memory database.
+        /// </summary>
+        /// <param name="testName">Optional test name for unique database naming</param>
+        /// <returns>A configured SalesDbContext instance</returns>
+        public SalesDbContext CreateSalesDbContext(string? testName = null)
+        {
+            return CreateInMemoryContext<SalesDbContext>(testName ?? "SalesDbTest");
+        }
+
+        /// <summary>
+        /// Creates an Inventory database context for testing using in-memory database.
+        /// </summary>
+        /// <param name="testName">Optional test name for unique database naming</param>
+        /// <returns>A configured InventoryDbContext instance</returns>
+        public InventoryDbContext CreateInventoryDbContext(string? testName = null)
+        {
+            return CreateInMemoryContext<InventoryDbContext>(testName ?? "InventoryDbTest");
         }
 
         /// <summary>

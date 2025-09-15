@@ -1,5 +1,27 @@
 version: '3.8'
 
+# ===================================================================================================
+# SalesAPI Docker Compose Configuration
+# This configuration eliminates magic numbers by using environment variables and centralized defaults
+# ===================================================================================================
+
+# Shared health check configuration to avoid duplication
+x-health-check-defaults: &health-check-defaults
+  interval: ${HEALTH_CHECK_INTERVAL:-30s}
+  timeout: ${HEALTH_CHECK_TIMEOUT:-10s}
+  retries: ${HEALTH_CHECK_RETRIES:-3}
+  start_period: ${HEALTH_CHECK_START_PERIOD:-40s}
+
+# Common environment variables shared across services
+x-common-env: &common-env
+  ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+  ASPNETCORE_URLS: http://+:${CONTAINER_PORT:-8080}
+  ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${SQL_DATABASE:-};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True
+  ConnectionStrings__RabbitMQ: amqp://${RABBITMQ_USERNAME:-admin}:${RABBITMQ_PASSWORD:-admin123}@${RABBITMQ_HOST:-host.docker.internal}:${RABBITMQ_PORT:-5672}/
+  Jwt__Key: ${JWT_KEY:-ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!}
+  Jwt__Issuer: ${JWT_ISSUER:-SalesAPI-Gateway}
+  Jwt__Audience: ${JWT_AUDIENCE:-SalesAPI-Services}
+
 services:
   inventory:
     build:
@@ -8,25 +30,17 @@ services:
     container_name: salesapi-inventory
     restart: unless-stopped
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:8080
-      - ConnectionStrings__DefaultConnection=Server=host.docker.internal;Database=InventoryDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True
-      - ConnectionStrings__RabbitMQ=amqp://admin:admin123@host.docker.internal:5672/
-      - Jwt__Key=ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!
-      - Jwt__Issuer=SalesAPI-Gateway
-      - Jwt__Audience=SalesAPI-Services
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${INVENTORY_DB:-InventoryDb};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True
     ports:
-      - "5000:8080"
+      - "${INVENTORY_PORT:-5000}:${CONTAINER_PORT:-8080}"
     networks:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      <<: *health-check-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT:-8080}/health"]
 
   sales:
     build:
@@ -37,26 +51,18 @@ services:
     depends_on:
       - inventory
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:8080
-      - ConnectionStrings__DefaultConnection=Server=host.docker.internal;Database=SalesDb;User Id=sa;Password=Your_password123;TrustServerCertificate=True
-      - ConnectionStrings__RabbitMQ=amqp://admin:admin123@host.docker.internal:5672/
-      - Services__InventoryApi=http://inventory:8080
-      - Jwt__Key=ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!
-      - Jwt__Issuer=SalesAPI-Gateway
-      - Jwt__Audience=SalesAPI-Services
+      <<: *common-env
+      ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${SALES_DB:-SalesDb};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True
+      Services__InventoryApi: http://${INVENTORY_SERVICE_NAME:-inventory}:${CONTAINER_PORT:-8080}
     ports:
-      - "5001:8080"
+      - "${SALES_PORT:-5001}:${CONTAINER_PORT:-8080}"
     networks:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      <<: *health-check-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT:-8080}/health"]
 
   gateway:
     build:
@@ -68,23 +74,23 @@ services:
       - inventory
       - sales
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:8080
-      - Jwt__Key=ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!
-      - Jwt__Issuer=SalesAPI-Gateway
-      - Jwt__Audience=SalesAPI-Services
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: http://+:${CONTAINER_PORT:-8080}
+      Jwt__Key: ${JWT_KEY:-ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!}
+      Jwt__Issuer: ${JWT_ISSUER:-SalesAPI-Gateway}
+      Jwt__Audience: ${JWT_AUDIENCE:-SalesAPI-Services}
+      # Configure reverse proxy destinations dynamically
+      ReverseProxy__Clusters__inventory-cluster__Destinations__destination1__Address: http://${INVENTORY_SERVICE_NAME:-inventory}:${CONTAINER_PORT:-8080}/
+      ReverseProxy__Clusters__sales-cluster__Destinations__destination1__Address: http://${SALES_SERVICE_NAME:-sales}:${CONTAINER_PORT:-8080}/
     ports:
-      - "6000:8080"
+      - "${GATEWAY_PORT:-6000}:${CONTAINER_PORT:-8080}"
     networks:
       - salesapi-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      <<: *health-check-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT:-8080}/health"]
 
 networks:
   salesapi-network:

@@ -1,7 +1,8 @@
 using Serilog;
 using SalesApi.Configuration;
+using SalesApi.Configuration.Validation;
 using SalesApi.Middleware;
-using SalesApi.Persistence;
+using SalesApi.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Prometheus;
 
@@ -16,17 +17,37 @@ try
     // Configure Serilog logging
     builder.ConfigureLogging();
 
+    // Validate configuration before proceeding
+    try
+    {
+        Log.Information("?? Validating application configuration");
+        // Create a temporary logger for configuration validation
+        using var loggerFactory = LoggerFactory.Create(b => b.AddSerilog());
+        var logger = loggerFactory.CreateLogger<Program>();
+        
+        ConfigurationValidator.ValidateConfiguration(builder.Configuration, logger);
+        Log.Information("? Configuration validation completed successfully");
+    }
+    catch (Exception configEx)
+    {
+        Log.Fatal(configEx, "? Configuration validation failed");
+        throw;
+    }
+
     // Configure services
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();
 
-    // Configure application services
+    // Create logger factory for configuration services
+    var serviceLoggerFactory = LoggerFactory.Create(b => b.AddSerilog());
+    
+    // Configure application services with enhanced error handling
     builder.Services
-        .AddDatabaseServices(builder.Configuration)
-        .AddAuthenticationServices(builder.Configuration)
+        .AddDatabaseServices(builder.Configuration, serviceLoggerFactory.CreateLogger("DatabaseConfiguration"))
+        .AddAuthenticationServices(builder.Configuration, serviceLoggerFactory.CreateLogger("AuthenticationConfiguration"))
         .AddMessagingServices(builder.Configuration)
-        .AddHttpClientServices(builder.Configuration)
+        .AddHttpClientServices(builder.Configuration, serviceLoggerFactory.CreateLogger("HttpClientConfiguration"))
         .AddDomainServices();
 
     // Configure health checks
@@ -51,7 +72,7 @@ try
 }
 catch (Exception ex)
 {
-    Log.Fatal(ex, "? Sales API service failed to start");
+    Log.Fatal(ex, "?? Sales API service failed to start");
     throw;
 }
 finally
