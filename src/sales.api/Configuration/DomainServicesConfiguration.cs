@@ -2,14 +2,13 @@ using SalesApi.Domain.Repositories;
 using SalesApi.Domain.Services;
 using SalesApi.Infrastructure.Repositories;
 using SalesApi.Infrastructure.Services;
-using BuildingBlocks.Events.Infrastructure;
-using SalesAPI.Services;
 using MediatR;
 
 namespace SalesApi.Configuration
 {
     /// <summary>
     /// Extension methods for configuring business domain services.
+    /// Registers domain services without any fake implementations.
     /// </summary>
     public static class DomainServicesConfiguration
     {
@@ -25,8 +24,8 @@ namespace SalesApi.Configuration
                 cfg.RegisterServicesFromAssembly(typeof(Program).Assembly);
             });
 
-            // Register event publisher for event-driven architecture
-            services.AddScoped<IEventPublisher, EventPublisher>();
+            // Event publisher is registered by MessagingServices
+            // No fake implementations in production domain services
 
             return services;
         }

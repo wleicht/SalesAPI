@@ -1,90 +1,32 @@
 using BuildingBlocks.Events.Infrastructure;
 using SalesApi.Services.EventPublisher;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace SalesApi.Services.EventPublisher
 {
     /// <summary>
-    /// Factory for creating appropriate event publisher implementations based on environment and configuration.
+    /// Production-ready factory for event publisher implementations.
+    /// Provides environment-specific configurations without fake implementations in production code.
     /// </summary>
     public static class EventPublisherFactory
     {
         /// <summary>
-        /// Creates an event publisher based on the specified configuration.
+        /// Creates the appropriate event publisher based on configuration.
+        /// Always returns production implementations - testing uses separate infrastructure.
         /// </summary>
-        /// <param name="serviceProvider">Service provider for dependency resolution</param>
-        /// <param name="useRealImplementation">Whether to use real or mock implementation</param>
-        /// <returns>IEventPublisher instance</returns>
-        public static IEventPublisher CreateEventPublisher(
-            IServiceProvider serviceProvider, 
-            bool useRealImplementation = true)
+        public static IEventPublisher CreateEventPublisher(IServiceProvider serviceProvider)
         {
-            if (useRealImplementation)
-            {
-                return serviceProvider.GetRequiredService<RealEventPublisher>();
-            }
-            
-            // For development/testing scenarios
-            var logger = serviceProvider.GetRequiredService<ILogger<DevMockEventPublisher>>();
-            return new DevMockEventPublisher(logger);
+            return serviceProvider.GetRequiredService<RealEventPublisher>();
         }
 
         /// <summary>
-        /// Creates an event publisher based on environment name.
+        /// Registers event publisher services in the DI container.
         /// </summary>
-        /// <param name="serviceProvider">Service provider for dependency resolution</param>
-        /// <param name="environmentName">Environment name (Development, Production, etc.)</param>
-        /// <returns>IEventPublisher instance</returns>
-        public static IEventPublisher CreateEventPublisher(
-            IServiceProvider serviceProvider, 
-            string environmentName)
+        public static IServiceCollection AddEventPublisher(this IServiceCollection services)
         {
-            var useReal = !string.Equals(environmentName, "Development", StringComparison.OrdinalIgnoreCase);
-            return CreateEventPublisher(serviceProvider, useReal);
-        }
-    }
-
-    /// <summary>
-    /// Development-only mock event publisher for scenarios where RabbitMQ is not available.
-    /// This should NEVER be used in production.
-    /// </summary>
-    internal class DevMockEventPublisher : IEventPublisher
-    {
-        private readonly ILogger<DevMockEventPublisher> _logger;
-
-        public DevMockEventPublisher(ILogger<DevMockEventPublisher> logger)
-        {
-            _logger = logger;
-        }
-
-        public Task PublishAsync<TEvent>(TEvent domainEvent, CancellationToken cancellationToken = default) 
-            where TEvent : BuildingBlocks.Events.Domain.DomainEvent
-        {
-            var eventType = typeof(TEvent).Name;
-            var correlationId = domainEvent.CorrelationId ?? "unknown";
-            
-            _logger.LogWarning(
-                "?? DEV MODE: Mock event published: {EventType} | EventId: {EventId} | CorrelationId: {CorrelationId}",
-                eventType,
-                domainEvent.EventId,
-                correlationId);
-            
-            return Task.CompletedTask;
-        }
-
-        public Task PublishManyAsync<TEvent>(IEnumerable<TEvent> domainEvents, CancellationToken cancellationToken = default) 
-            where TEvent : BuildingBlocks.Events.Domain.DomainEvent
-        {
-            var events = domainEvents.ToList();
-            var eventType = typeof(TEvent).Name;
-            
-            _logger.LogWarning(
-                "?? DEV MODE: Mock batch events published: {EventType} | Count: {EventCount}",
-                eventType,
-                events.Count);
-            
-            return Task.CompletedTask;
+            services.AddScoped<IEventPublisher, RealEventPublisher>();
+            return services;
         }
     }
 }
