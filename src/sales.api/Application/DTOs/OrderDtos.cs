@@ -344,7 +344,16 @@ namespace SalesApi.Application.DTOs
         /// <summary>
         /// Order data if operation was successful.
         /// </summary>
-        public OrderDto? Order { get; set; }
+        public OrderDto? Data { get; set; }
+
+        /// <summary>
+        /// Order data if operation was successful (alias for Data).
+        /// </summary>
+        public OrderDto? Order 
+        { 
+            get => Data; 
+            set => Data = value; 
+        }
 
         /// <summary>
         /// Error message if operation failed.
@@ -365,7 +374,7 @@ namespace SalesApi.Application.DTOs
         /// Creates a successful operation result.
         /// </summary>
         public static OrderOperationResultDto Success(OrderDto order) => 
-            new() { IsSuccess = true, Order = order };
+            new() { IsSuccess = true, Data = order };
 
         /// <summary>
         /// Creates a failed operation result.

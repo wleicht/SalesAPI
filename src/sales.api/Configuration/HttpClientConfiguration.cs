@@ -17,15 +17,8 @@ namespace SalesApi.Configuration
             IConfiguration configuration,
             ILogger? logger = null)
         {
-            // Create properly typed logger for DynamicConfigurationProvider
-            var loggerFactory = services.BuildServiceProvider().GetService<ILoggerFactory>();
-            var configProviderLogger = loggerFactory?.CreateLogger<DynamicConfigurationProvider>()
-                ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DynamicConfigurationProvider>.Instance;
-
-            var configProvider = new DynamicConfigurationProvider(configuration, configProviderLogger);
-
-            // Get base URLs using configuration provider with fallbacks
-            var inventoryApiUrl = GetInventoryApiUrl(configuration, configProvider, logger);
+            // Get inventory API URL directly from configuration without circular dependency
+            var inventoryApiUrl = GetInventoryApiUrlSafely(configuration, logger);
 
             // Configure HTTP client for Inventory API with correlation propagation
             services.AddHttpClient<IInventoryClient, InventoryClient>(client =>
@@ -49,20 +42,25 @@ namespace SalesApi.Configuration
 
             // Register correlation handler
             services.AddTransient<CorrelationHttpMessageHandler>();
+            
+            // Register the configuration provider as a service for proper DI
+            services.AddSingleton<DynamicConfigurationProvider>();
 
             logger?.LogInformation("HttpClient services configured successfully");
             return services;
         }
 
-        private static string GetInventoryApiUrl(IConfiguration configuration, DynamicConfigurationProvider configProvider, ILogger? logger)
+        private static string GetInventoryApiUrlSafely(IConfiguration configuration, ILogger? logger)
         {
             // Try to get from configuration first
             var inventoryApiUrl = configuration[ConfigurationKeys.InventoryApiUrl];
             
             if (string.IsNullOrEmpty(inventoryApiUrl))
             {
-                // Build URL from service configuration
-                inventoryApiUrl = configProvider.GetServiceBaseUrl("InventoryApi");
+                // Build URL from service configuration without circular dependency
+                var host = configuration.GetValue<string>("Services:InventoryApi:Host") ?? NetworkConstants.Hosts.Localhost;
+                var port = configuration.GetValue<int?>("NetworkPorts:InventoryApi") ?? NetworkConstants.Ports.InventoryApi;
+                inventoryApiUrl = $"http://{host}:{port}";
                 logger?.LogInformation("Built Inventory API URL from configuration: {InventoryApiUrl}", inventoryApiUrl);
             }
             else

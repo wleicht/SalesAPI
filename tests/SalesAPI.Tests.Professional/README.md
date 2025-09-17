@@ -1,101 +1,101 @@
 # SalesAPI Professional Testing Suite
 
-## ?? Visão Geral
+## Overview
 
-Este é um framework de testes profissional implementado para o SalesAPI, seguindo as melhores práticas da indústria de software para testes em microserviços. A suíte foi projetada para fornecer cobertura completa e confiável em todos os níveis da pirâmide de testes.
+This is a professional testing framework implemented for SalesAPI, following industry software testing best practices for microservices. The suite is designed to provide complete and reliable coverage across all levels of the testing pyramid.
 
-## ??? Arquitetura da Pirâmide de Testes
+## Testing Pyramid Architecture
 
 ```
-    /\        End-to-End Tests (Cenários)
-   /  \       ? Menor quantidade, maior custo
-  /____\      Integration Tests (Fluxos) 
- /______\     Infrastructure Tests (Persistência)
-/_______\     Domain Tests (Lógica de Negócio)
-           ? Maior quantidade, menor custo
+    /\        End-to-End Tests (Scenarios)
+   /  \       ? Fewer quantity, higher cost
+  /____\      Integration Tests (Flows) 
+ /______\     Infrastructure Tests (Persistence)
+/_______\     Domain Tests (Business Logic)
+           ? Higher quantity, lower cost
 ```
 
-## ?? Estrutura dos Testes
+## Test Structure
 
-### 1. **Domain Tests** - Testes de Unidade Puros
-- **Localização**: `Domain.Tests/`
-- **Objetivo**: Testar lógica de negócio isolada
-- **Características**:
-  - ? Execução rápida (< 1ms por teste)
-  - ? Sem dependências externas
-  - ? Determinísticos e confiáveis
-  - ? Foco em regras de negócio
+### 1. **Domain Tests** - Pure Unit Tests
+- **Location**: `Domain.Tests/`
+- **Objective**: Test isolated business logic
+- **Characteristics**:
+  - ? Fast execution (< 1ms per test)
+  - ?? No external dependencies
+  - ? Deterministic and reliable
+  - ?? Focus on business rules
 
-**Exemplo de Testes**:
-- Criação e validação de entidades (Order, Product)
-- Cálculos de totais e preços
-- Transições de status de pedidos
-- Validações de business rules
+**Test Examples**:
+- Entity creation and validation (Order, Product)
+- Total and price calculations
+- Order status transitions
+- Business rule validations
 
-### 2. **Infrastructure Tests** - Testes de Infraestrutura
-- **Localização**: `Infrastructure.Tests/`
-- **Objetivo**: Testar componentes de infraestrutura
-- **Características**:
-  - ??? Persistência com bancos in-memory
-  - ?? Messaging com implementações fake
-  - ?? Transações e concorrência
-  - ?? Performance e bulk operations
+### 2. **Infrastructure Tests** - Infrastructure Component Tests
+- **Location**: `Infrastructure.Tests/`
+- **Objective**: Test infrastructure components
+- **Characteristics**:
+  - ?? Persistence with in-memory databases
+  - ?? Messaging with fake implementations
+  - ?? Transactions and concurrency
+  - ? Performance and bulk operations
 
-**Exemplo de Testes**:
-- Operações CRUD no banco de dados
-- Serialização e publicação de mensagens
-- Consultas complexas e paginação
-- Testes de concorrência
+**Test Examples**:
+- Database CRUD operations
+- Message serialization and publishing
+- Complex queries and pagination
+- Concurrency tests
 
-### 3. **Integration Tests** - Testes de Integração
-- **Localização**: `Integration.Tests/`
-- **Objetivo**: Testar fluxos completos entre componentes
-- **Características**:
-  - ?? Integração entre Sales e Inventory
-  - ?? Fluxos completos de pedidos
-  - ?? Processamento de eventos
-  - ? Cenários de sucesso e falha
+### 3. **Integration Tests** - Integration Tests
+- **Location**: `Integration.Tests/`
+- **Objective**: Test complete flows between components
+- **Characteristics**:
+  - ?? Integration between Sales and Inventory
+  - ?? Complete order flows
+  - ?? Event processing
+  - ? Success and failure scenarios
 
-**Exemplo de Testes**:
-- Fluxo completo de criação de pedido
-- Processamento de cancelamento
-- Reserva e liberação de estoque
-- Múltiplos produtos em uma ordem
+**Test Examples**:
+- Complete order creation flow
+- Cancellation processing
+- Stock reservation and release
+- Multiple products in one order
 
-### 4. **TestInfrastructure** - Infraestrutura Compartilhada
-- **Localização**: `TestInfrastructure/`
-- **Objetivo**: Componentes reutilizáveis para testes
-- **Componentes**:
-  - ??? **TestDatabaseFactory**: Criação de contextos de teste
-  - ?? **TestMessagingFactory**: Sistema de messaging para testes
-  - ?? **TestServerFactory**: Clientes HTTP para APIs
-  - ?? **TestFixtures**: Fixtures compartilhadas com xUnit
+### 4. **TestInfrastructure** - Shared Infrastructure
+- **Location**: `TestInfrastructure/`
+- **Objective**: Reusable components for tests
+- **Components**:
+  - ?? **TestDatabaseFactory**: Test context creation
+  - ?? **TestMessagingFactory**: Messaging system for tests
+  - ?? **TestServerFactory**: HTTP clients for APIs
+  - ?? **TestFixtures**: Shared fixtures with xUnit
 
-## ?? Resumo de Cobertura de Testes
+## Test Coverage Summary
 
-| Categoria | Quantidade | Tempo Execução | Status |
-|-----------|------------|----------------|--------|
-| **Domain Tests** | 33 testes | ~2.9s | ? Todos passando |
-| **Infrastructure Tests** | 17 testes | ~2.6s | ? Todos passando |
-| **Integration Tests** | 4 testes | ~2.8s | ? Todos passando |
-| **TOTAL** | **54 testes** | **~8.3s** | ? **100% sucesso** |
+| Category | Quantity | Execution Time | Status |
+|----------|----------|----------------|--------|
+| **Domain Tests** | 33 tests | ~2.9s | ? All passing |
+| **Infrastructure Tests** | 17 tests | ~2.6s | ? All passing |
+| **Integration Tests** | 4 tests | ~2.8s | ? All passing |
+| **TOTAL** | **54 tests** | **~8.3s** | ? **100% success** |
 
-## ?? Como Executar
+## How to Execute
 
-### Execução Individual por Categoria
+### Individual Execution by Category
 
 ```bash
-# Testes de Domínio (mais rápidos)
+# Domain tests (fastest)
 dotnet test tests/SalesAPI.Tests.Professional/Domain.Tests/
 
-# Testes de Infraestrutura
+# Infrastructure tests
 dotnet test tests/SalesAPI.Tests.Professional/Infrastructure.Tests/
 
-# Testes de Integração
+# Integration tests
 dotnet test tests/SalesAPI.Tests.Professional/Integration.Tests/
 ```
 
-### Scripts de Conveniência
+### Convenience Scripts
 
 **PowerShell** (Windows):
 ```powershell
@@ -108,47 +108,47 @@ chmod +x ./tests/run-professional-tests.sh
 ./tests/run-professional-tests.sh
 ```
 
-## ??? Padrões e Melhores Práticas Implementadas
+## Implemented Patterns and Best Practices
 
-### ? **Naming Conventions**
+### ?? **Naming Conventions**
 - **Classes**: `{Feature}Tests` (ex: `OrderTests`)
-- **Métodos**: `{Method}_{Scenario}_{ExpectedResult}` 
-- **Exemplo**: `CreateOrder_WithValidItems_ShouldCalculateCorrectTotal`
+- **Methods**: `{Method}_{Scenario}_{ExpectedResult}` 
+- **Example**: `CreateOrder_WithValidItems_ShouldCalculateCorrectTotal`
 
-### ? **AAA Pattern (Arrange-Act-Assert)**
+### ?? **AAA Pattern (Arrange-Act-Assert)**
 ```csharp
 [Fact]
 public async Task CreateOrder_WithValidItems_ShouldCalculateCorrectTotal()
 {
-    // Arrange - Preparar dados de teste
+    // Arrange - Prepare test data
     var order = CreateTestOrder();
     var item = CreateTestItem(quantity: 3, price: 99.99m);
     
-    // Act - Executar a ação sendo testada
+    // Act - Execute the action being tested
     order.Items.Add(item);
     order.CalculateTotal();
     
-    // Assert - Verificar o resultado
+    // Assert - Verify the result
     order.TotalAmount.Should().Be(299.97m);
 }
 ```
 
-### ? **Dependency Injection e Testabilidade**
-- Injeção de dependências em todas as camadas
-- Interfaces bem definidas para mock/fake
-- Factories para criação de objetos de teste
-- Separation of concerns clara
+### ?? **Dependency Injection and Testability**
+- Dependency injection across all layers
+- Well-defined interfaces for mock/fake
+- Factories for test object creation
+- Clear separation of concerns
 
 ### ? **Fluent Assertions**
 ```csharp
-// Em vez de Assert.Equal(expected, actual)
+// Instead of Assert.Equal(expected, actual)
 result.Should().NotBeNull();
 result.Items.Should().HaveCount(3);
 result.TotalAmount.Should().BeGreaterThan(0);
 result.Status.Should().Be("Confirmed");
 ```
 
-### ? **Test Data Builders**
+### ??? **Test Data Builders**
 ```csharp
 private Order CreateTestOrder()
 {
@@ -162,81 +162,81 @@ private Order CreateTestOrder()
 }
 ```
 
-### ? **Isolation e Cleanup**
-- Cada teste executa de forma isolada
-- Implementação de `IAsyncLifetime` para setup/teardown
-- Bancos in-memory únicos por teste
-- Cleanup automático de recursos
+### ?? **Isolation and Cleanup**
+- Each test executes in isolation
+- Implementation of `IAsyncLifetime` for setup/teardown
+- Unique in-memory databases per test
+- Automatic resource cleanup
 
-## ?? Tecnologias e Ferramentas
+## Technologies and Tools
 
-### **Frameworks de Teste**
-- **xUnit**: Framework principal de testes
-- **FluentAssertions**: Assertions mais legíveis
-- **Bogus**: Geração de dados de teste realistas
+### **Testing Frameworks**
+- **xUnit**: Primary testing framework
+- **FluentAssertions**: More readable assertions
+- **Bogus**: Realistic test data generation
 
-### **Mocking e Fakes**
-- **FakeBus**: Implementação fake para messaging
-- **InMemory Database**: EF Core in-memory para testes rápidos
-- **TestDoubles**: Objetos de teste customizados
+### **Mocking and Fakes**
+- **FakeBus**: Fake implementation for messaging
+- **InMemory Database**: EF Core in-memory for fast tests
+- **TestDoubles**: Custom test objects
 
-### **Infraestrutura**
-- **Entity Framework Core**: Persistência
-- **Microsoft.Extensions.Logging**: Logging estruturado
-- **Docker**: Containerização para testes (futuro)
+### **Infrastructure**
+- **Entity Framework Core**: Persistence
+- **Microsoft.Extensions.Logging**: Structured logging
+- **Docker**: Containerization for tests (future)
 
-## ?? Benefícios Alcançados
+## Achieved Benefits
 
-### **?? Performance**
-- Execução completa em menos de 10 segundos
-- Testes paralelos quando possível
-- In-memory databases para velocidade
+### **? Performance**
+- Complete execution in less than 10 seconds
+- Parallel tests when possible
+- In-memory databases for speed
 
-### **?? Confiabilidade**
-- Testes determinísticos (sem flaky tests)
-- Isolamento completo entre testes
-- Cleanup automático de recursos
+### **?? Reliability**
+- Deterministic tests (no flaky tests)
+- Complete isolation between tests
+- Automatic resource cleanup
 
-### **?? Manutenibilidade**
-- Código de teste limpo e bem estruturado
-- Reutilização através de TestInfrastructure
-- Patterns consistentes em toda a suíte
+### **?? Maintainability**
+- Clean and well-structured test code
+- Reuse through TestInfrastructure
+- Consistent patterns throughout the suite
 
-### **?? Debugabilidade**
-- Logs estruturados nos testes
-- Messages claras de falha
-- Correlation IDs para rastreamento
+### **?? Debuggability**
+- Structured logs in tests
+- Clear failure messages
+- Correlation IDs for tracking
 
-## ?? Próximos Passos Recomendados
+## Recommended Next Steps
 
-### **?? Expansão de Cobertura**
-1. **End-to-End Tests**: Testes com APIs reais
-2. **Performance Tests**: Load testing e benchmarks  
-3. **Security Tests**: Testes de autenticação e autorização
-4. **Contract Tests**: Pact testing entre microserviços
+### **?? Coverage Expansion**
+1. **End-to-End Tests**: Tests with real APIs
+2. **Performance Tests**: Load testing and benchmarks  
+3. **Security Tests**: Authentication and authorization tests
+4. **Contract Tests**: Pact testing between microservices
 
-### **?? Melhorias de Infraestrutura**
-1. **Test Containers**: Bancos reais em containers
-2. **Test Data Management**: Builders mais sofisticados
-3. **Parallel Execution**: Otimização para execução paralela
-4. **CI/CD Integration**: Integração com pipelines
+### **??? Infrastructure Improvements**
+1. **Test Containers**: Real databases in containers
+2. **Test Data Management**: More sophisticated builders
+3. **Parallel Execution**: Optimization for parallel execution
+4. **CI/CD Integration**: Integration with pipelines
 
-### **?? Monitoring e Reporting**
-1. **Code Coverage**: Medição de cobertura de código
-2. **Test Reporting**: Reports HTML para análise
-3. **Trend Analysis**: Acompanhamento de tendências
-4. **Quality Gates**: Gates automáticos de qualidade
+### **?? Monitoring and Reporting**
+1. **Code Coverage**: Code coverage measurement
+2. **Test Reporting**: HTML reports for analysis
+3. **Trend Analysis**: Trend tracking
+4. **Quality Gates**: Automatic quality gates
 
-## ?? Conclusão
+## Conclusion
 
-Este framework de testes profissional estabelece uma base sólida para desenvolvimento orientado por testes (TDD) no SalesAPI. Com **54 testes** cobrindo todas as camadas da aplicação, a suíte garante:
+This professional testing framework establishes a solid foundation for Test-Driven Development (TDD) in SalesAPI. With **54 tests** covering all application layers, the suite ensures:
 
-- ? **Alta Confiabilidade**: Testes determinísticos e estáveis
-- ? **Execução Rápida**: Feedback em menos de 10 segundos  
-- ? **Fácil Manutenção**: Código limpo e bem estruturado
-- ? **Cobertura Abrangente**: De unidade até integração
+- ? **High Reliability**: Deterministic and stable tests
+- ? **Fast Execution**: Feedback in less than 10 seconds  
+- ?? **Easy Maintenance**: Clean and well-structured code
+- ?? **Comprehensive Coverage**: From unit to integration
 
-O framework está pronto para **produção** e serve como **modelo** para outros microserviços da arquitetura.
+The framework is **production-ready** and serves as a **model** for other microservices in the architecture.
 
 ---
-*Documentação atualizada: Dezembro 2024*
+*Documentation updated: December 2024*

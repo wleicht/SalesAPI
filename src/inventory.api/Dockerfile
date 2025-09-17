@@ -3,36 +3,38 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
 EXPOSE 8080
 
+# Instalar ferramentas necessárias para health check e debugging
+RUN apt-get update && \
+    apt-get install -y curl netcat-traditional && \
+    rm -rf /var/lib/apt/lists/*
+
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy project files
+# Copy project files primeiro para melhor cache das dependências
 COPY ["src/inventory.api/inventory.api.csproj", "src/inventory.api/"]
 COPY ["src/buildingblocks.contracts/buildingblocks.contracts.csproj", "src/buildingblocks.contracts/"]
 COPY ["src/buildingblocks.events/buildingblocks.events.csproj", "src/buildingblocks.events/"]
 
-# Restore dependencies
-RUN dotnet restore "src/inventory.api/inventory.api.csproj"
+# Restore dependencies com verbose para debug
+RUN dotnet restore "src/inventory.api/inventory.api.csproj" --verbosity minimal
 
 # Copy source code
 COPY . .
 
-# Build the application
+# Build com configurações otimizadas
 WORKDIR "/src/src/inventory.api"
-RUN dotnet build "inventory.api.csproj" -c Release -o /app/build
+RUN dotnet build "inventory.api.csproj" -c Release -o /app/build --no-restore
 
 FROM build AS publish
-RUN dotnet publish "inventory.api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "inventory.api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore
 
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 
-# Install curl for health check
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-
-# Health check for Inventory API
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+# Health check melhorado com mais tempo para startup
+HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=5 \
   CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["dotnet", "inventory.api.dll"]

@@ -37,14 +37,14 @@ try
     // Configure the HTTP request pipeline
     ConfigurePipeline(app);
 
-    Log.Information("?? Gateway starting on {Address} with JWT authentication and observability enabled", 
+    Log.Information("?? Gateway starting on {Address} with enhanced JWT security and observability", 
         app.Environment.IsDevelopment() ? "http://localhost:6000" : "containerized environment");
 
     app.Run();
 }
 catch (Exception ex)
 {
-    Log.Fatal(ex, "? Gateway service failed to start");
+    Log.Fatal(ex, "?? Gateway service failed to start");
     throw;
 }
 finally
@@ -61,7 +61,7 @@ static void ConfigurePipeline(WebApplication app)
         app.UseSwaggerUI(c =>
         {
             c.SwaggerEndpoint("/swagger/v1/swagger.json", "Gateway API V1");
-            c.DocumentTitle = "SalesAPI Gateway with JWT Authentication & Observability";
+            c.DocumentTitle = "SalesAPI Gateway with Enhanced JWT Security & Observability";
         });
         Log.Information("Swagger UI enabled for development environment");
     }
@@ -75,6 +75,9 @@ static void ConfigurePipeline(WebApplication app)
 
     app.UseHttpsRedirection();
 
+    // Enhanced JWT validation middleware (before authentication)
+    app.UseMiddleware<EnhancedJwtValidationMiddleware>();
+
     // Authentication and Authorization middleware
     app.UseAuthentication();
     app.UseAuthorization();
@@ -87,5 +90,6 @@ static void ConfigurePipeline(WebApplication app)
     // Map YARP reverse proxy
     app.MapReverseProxy();
 
-    Log.Information("Prometheus metrics endpoint available at /metrics");
+    Log.Information("?? Enhanced JWT validation middleware enabled");
+    Log.Information("?? Prometheus metrics endpoint available at /metrics");
 }

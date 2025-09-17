@@ -1,37 +1,52 @@
-version: '3.8'
-
-# ===================================================================================================
 # SalesAPI Docker Compose Configuration
-# This configuration eliminates magic numbers by using environment variables and centralized defaults
-# ===================================================================================================
-
-# Shared health check configuration to avoid duplication
 x-health-check-defaults: &health-check-defaults
   interval: ${HEALTH_CHECK_INTERVAL:-30s}
-  timeout: ${HEALTH_CHECK_TIMEOUT:-10s}
-  retries: ${HEALTH_CHECK_RETRIES:-3}
-  start_period: ${HEALTH_CHECK_START_PERIOD:-40s}
+  timeout: ${HEALTH_CHECK_TIMEOUT:-15s}
+  retries: ${HEALTH_CHECK_RETRIES:-5}
+  start_period: ${HEALTH_CHECK_START_PERIOD:-90s}
 
-# Common environment variables shared across services
 x-common-env: &common-env
-  ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+  ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
   ASPNETCORE_URLS: http://+:${CONTAINER_PORT:-8080}
-  ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${SQL_DATABASE:-};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True
+  ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${SQL_DATABASE:-};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True;Connection Timeout=60
   ConnectionStrings__RabbitMQ: amqp://${RABBITMQ_USERNAME:-admin}:${RABBITMQ_PASSWORD:-admin123}@${RABBITMQ_HOST:-host.docker.internal}:${RABBITMQ_PORT:-5672}/
   Jwt__Key: ${JWT_KEY:-ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!}
   Jwt__Issuer: ${JWT_ISSUER:-SalesAPI-Gateway}
   Jwt__Audience: ${JWT_AUDIENCE:-SalesAPI-Services}
 
 services:
+  wait-for-dependencies:
+    image: alpine:latest
+    container_name: salesapi-wait-deps
+    command: >
+      sh -c "
+        echo 'Verificando dependencias externas...' &&
+        apk add --no-cache netcat-openbsd &&
+        echo 'Aguardando SQL Server...' &&
+        timeout 60 sh -c 'until nc -z host.docker.internal 1433; do echo \"Waiting for SQL Server...\"; sleep 2; done' &&
+        echo 'Aguardando RabbitMQ...' &&
+        timeout 60 sh -c 'until nc -z host.docker.internal 5672; do echo \"Waiting for RabbitMQ...\"; sleep 2; done' &&
+        echo 'Dependencias disponiveis!'
+      "
+    networks:
+      - salesapi-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   inventory:
     build:
       context: ../..
       dockerfile: src/inventory.api/Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
     container_name: salesapi-inventory
     restart: unless-stopped
+    depends_on:
+      wait-for-dependencies:
+        condition: service_completed_successfully
     environment:
       <<: *common-env
-      ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${INVENTORY_DB:-InventoryDb};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True
+      ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${INVENTORY_DB:-InventoryDb};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True;Connection Timeout=60
     ports:
       - "${INVENTORY_PORT:-5000}:${CONTAINER_PORT:-8080}"
     networks:
@@ -41,18 +56,30 @@ services:
     healthcheck:
       <<: *health-check-defaults
       test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT:-8080}/health"]
+    volumes:
+      - inventory_logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   sales:
     build:
       context: ../..
       dockerfile: src/sales.api/Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
     container_name: salesapi-sales
     restart: unless-stopped
     depends_on:
-      - inventory
+      wait-for-dependencies:
+        condition: service_completed_successfully
+      inventory:
+        condition: service_healthy
     environment:
       <<: *common-env
-      ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${SALES_DB:-SalesDb};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True
+      ConnectionStrings__DefaultConnection: Server=${SQL_HOST:-host.docker.internal};Database=${SALES_DB:-SalesDb};User Id=${SQL_USERNAME:-sa};Password=${SQL_PASSWORD:-Your_password123};TrustServerCertificate=True;Connection Timeout=60
       Services__InventoryApi: http://${INVENTORY_SERVICE_NAME:-inventory}:${CONTAINER_PORT:-8080}
     ports:
       - "${SALES_PORT:-5001}:${CONTAINER_PORT:-8080}"
@@ -63,23 +90,33 @@ services:
     healthcheck:
       <<: *health-check-defaults
       test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT:-8080}/health"]
+    volumes:
+      - sales_logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   gateway:
     build:
       context: ../..
       dockerfile: src/gateway/Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
     container_name: salesapi-gateway
     restart: unless-stopped
     depends_on:
-      - inventory
-      - sales
+      inventory:
+        condition: service_healthy
+      sales:
+        condition: service_healthy
     environment:
-      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:${CONTAINER_PORT:-8080}
       Jwt__Key: ${JWT_KEY:-ThisIsASecretKeyForJWTTokenGenerationAndValidation2024!}
       Jwt__Issuer: ${JWT_ISSUER:-SalesAPI-Gateway}
       Jwt__Audience: ${JWT_AUDIENCE:-SalesAPI-Services}
-      # Configure reverse proxy destinations dynamically
       ReverseProxy__Clusters__inventory-cluster__Destinations__destination1__Address: http://${INVENTORY_SERVICE_NAME:-inventory}:${CONTAINER_PORT:-8080}/
       ReverseProxy__Clusters__sales-cluster__Destinations__destination1__Address: http://${SALES_SERVICE_NAME:-sales}:${CONTAINER_PORT:-8080}/
     ports:
@@ -91,7 +128,23 @@ services:
     healthcheck:
       <<: *health-check-defaults
       test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT:-8080}/health"]
+    volumes:
+      - gateway_logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   salesapi-network:
     driver: bridge
+    name: salesapi-network
+
+volumes:
+  inventory_logs:
+    name: salesapi-inventory-logs
+  sales_logs:
+    name: salesapi-sales-logs
+  gateway_logs:
+    name: salesapi-gateway-logs

@@ -1,10 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using InventoryApi.Models;
+using InventoryApi.Domain.Entities;
 
 namespace InventoryApi.Persistence;
 
 /// <summary>
 /// Represents the database context for inventory management including products and event processing.
+/// Updated to use professional domain entities instead of simple models.
 /// </summary>
 public class InventoryDbContext : DbContext
 {
@@ -15,7 +16,7 @@ public class InventoryDbContext : DbContext
     public InventoryDbContext(DbContextOptions<InventoryDbContext> options) : base(options) { }
 
     /// <summary>
-    /// Product set in the database.
+    /// Product set in the database using professional domain entities.
     /// </summary>
     public DbSet<Product> Products { get; set; }
 
@@ -25,30 +26,8 @@ public class InventoryDbContext : DbContext
     public DbSet<ProcessedEvent> ProcessedEvents { get; set; }
 
     /// <summary>
-    /// DbSet for managing stock reservations that prevent race conditions during order processing.
-    /// Implements the Saga pattern for distributed transaction management across Sales and Inventory services.
+    /// Stock reservations for managing inventory allocation.
     /// </summary>
-    /// <remarks>
-    /// Stock reservations provide a critical reliability mechanism for e-commerce operations:
-    /// 
-    /// Business Purpose:
-    /// - Prevents overselling by temporarily allocating inventory during order processing
-    /// - Implements atomic stock allocation to avoid race conditions in concurrent scenarios
-    /// - Supports order cancellation and compensation workflows through reservation release
-    /// - Enables sophisticated inventory management and demand planning analytics
-    /// 
-    /// Technical Implementation:
-    /// - Reservations are created synchronously during order creation for immediate feedback
-    /// - Status transitions are managed through asynchronous event processing
-    /// - Database constraints ensure data consistency and prevent duplicate reservations
-    /// - Audit trail capabilities support compliance and troubleshooting requirements
-    /// 
-    /// Integration Patterns:
-    /// - HTTP Synchronous: Initial reservation creation with immediate availability validation
-    /// - Event Asynchronous: Order confirmation/cancellation processing via domain events
-    /// - Compensation Logic: Automatic reservation release for failed or cancelled orders
-    /// - Monitoring Support: Comprehensive logging and metrics for operational visibility
-    /// </remarks>
     public DbSet<StockReservation> StockReservations { get; set; }
 
     /// <summary>
@@ -59,19 +38,62 @@ public class InventoryDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Configure Product entity
+        // Configure Product entity (Domain Entity)
         modelBuilder.Entity<Product>(entity =>
         {
             entity.HasKey(p => p.Id);
-            entity.Property(p => p.Name).IsRequired().HasMaxLength(100);
-            entity.Property(p => p.Description).IsRequired().HasMaxLength(500);
-            entity.Property(p => p.Price).HasPrecision(18, 2);
-            entity.Property(p => p.StockQuantity).IsRequired();
-            entity.Property(p => p.CreatedAt).IsRequired();
+            
+            entity.Property(p => p.Id)
+                .ValueGeneratedNever() // Generated in domain
+                .IsRequired();
 
-            // Add index for performance
+            entity.Property(p => p.Name)
+                .IsRequired()
+                .HasMaxLength(200);
+
+            entity.Property(p => p.Description)
+                .IsRequired()
+                .HasMaxLength(1000);
+
+            entity.Property(p => p.Price)
+                .HasColumnType("decimal(18,2)")
+                .IsRequired();
+
+            entity.Property(p => p.StockQuantity)
+                .IsRequired();
+
+            entity.Property(p => p.IsActive)
+                .IsRequired()
+                .HasDefaultValue(true);
+
+            entity.Property(p => p.MinimumStockLevel)
+                .IsRequired()
+                .HasDefaultValue(10);
+
+            // Audit fields
+            entity.Property(p => p.CreatedAt)
+                .IsRequired();
+
+            entity.Property(p => p.UpdatedAt)
+                .IsRequired(false);
+
+            entity.Property(p => p.CreatedBy)
+                .HasMaxLength(255)
+                .IsRequired();
+
+            entity.Property(p => p.UpdatedBy)
+                .HasMaxLength(255)
+                .IsRequired(false);
+
+            // Add indexes for performance
             entity.HasIndex(p => p.Name);
             entity.HasIndex(p => p.CreatedAt);
+            entity.HasIndex(p => p.IsActive);
+            entity.HasIndex(p => new { p.IsActive, p.StockQuantity });
+
+            // Shadow properties for concurrency
+            entity.Property<byte[]>("RowVersion")
+                .IsRowVersion();
         });
 
         // Configure ProcessedEvent entity

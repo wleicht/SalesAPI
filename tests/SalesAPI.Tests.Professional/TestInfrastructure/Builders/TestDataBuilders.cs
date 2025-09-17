@@ -1,11 +1,11 @@
-using SalesApi.Models;
-using InventoryApi.Models;
+using SalesApi.Domain.Entities;
+using InventoryApi.Domain.Entities;
 
 namespace SalesAPI.Tests.Professional.TestInfrastructure.Builders
 {
     /// <summary>
-    /// Consolidated test data builders to eliminate duplication across test files.
-    /// Enhanced to cover complex scenarios that were in removed test projects.
+    /// Consolidated test data builders using professional domain entities.
+    /// Eliminates duplication and provides consistent test data across all test scenarios.
     /// </summary>
     public static class TestDataBuilders
     {
@@ -72,70 +72,40 @@ namespace SalesAPI.Tests.Professional.TestInfrastructure.Builders
         }
     }
 
+    /// <summary>
+    /// Builder for creating Order domain entities in tests.
+    /// Uses professional domain entity methods instead of direct property manipulation.
+    /// </summary>
     public class OrderBuilder
     {
-        private Order _order;
+        private Guid _customerId;
+        private string _createdBy;
+        private List<(Guid productId, string productName, int quantity, decimal unitPrice)> _items;
 
         public OrderBuilder()
         {
-            _order = new Order
-            {
-                Id = Guid.NewGuid(),
-                CustomerId = Guid.NewGuid(),
-                Status = "Pending",
-                CreatedAt = DateTime.UtcNow,
-                Items = new List<OrderItem>()
-            };
-        }
-
-        public OrderBuilder WithId(Guid id)
-        {
-            _order.Id = id;
-            return this;
+            _customerId = Guid.NewGuid();
+            _createdBy = "test-user";
+            _items = new List<(Guid, string, int, decimal)>();
         }
 
         public OrderBuilder WithCustomer(Guid customerId)
         {
-            _order.CustomerId = customerId;
+            _customerId = customerId;
             return this;
         }
 
-        public OrderBuilder WithStatus(string status)
+        public OrderBuilder WithCreatedBy(string createdBy)
         {
-            _order.Status = status;
-            return this;
-        }
-
-        public OrderBuilder WithItems(params OrderItem[] items)
-        {
-            _order.Items = items.ToList();
-            _order.TotalAmount = _order.Items.Sum(i => i.TotalPrice);
+            _createdBy = createdBy;
             return this;
         }
 
         public OrderBuilder WithStandardItems()
         {
-            var items = new[]
-            {
-                new OrderItem
-                {
-                    OrderId = _order.Id,
-                    ProductId = Guid.NewGuid(),
-                    ProductName = "Standard Product 1",
-                    Quantity = 2,
-                    UnitPrice = 50.00m
-                },
-                new OrderItem
-                {
-                    OrderId = _order.Id,
-                    ProductId = Guid.NewGuid(),
-                    ProductName = "Standard Product 2",
-                    Quantity = 1,
-                    UnitPrice = 75.00m
-                }
-            };
-
-            return WithItems(items);
+            _items.Add((Guid.NewGuid(), "Standard Product 1", 2, 50.00m));
+            _items.Add((Guid.NewGuid(), "Standard Product 2", 1, 75.00m));
+            return this;
         }
 
         /// <summary>
@@ -163,102 +133,123 @@ namespace SalesAPI.Tests.Professional.TestInfrastructure.Builders
 
         public OrderBuilder WithItem(string productName, int quantity, decimal unitPrice)
         {
-            var item = new OrderItem
-            {
-                OrderId = _order.Id,
-                ProductId = Guid.NewGuid(),
-                ProductName = productName,
-                Quantity = quantity,
-                UnitPrice = unitPrice
-            };
+            _items.Add((Guid.NewGuid(), productName, quantity, unitPrice));
+            return this;
+        }
 
-            _order.Items.Add(item);
+        public OrderBuilder WithItem(Guid productId, string productName, int quantity, decimal unitPrice)
+        {
+            _items.Add((productId, productName, quantity, unitPrice));
             return this;
         }
 
         /// <summary>
-        /// Sets the order creation date for testing temporal scenarios
+        /// Builds the Order using professional domain entity constructor and methods
         /// </summary>
-        public OrderBuilder WithCreatedDate(DateTime createdAt)
-        {
-            _order.CreatedAt = createdAt;
-            return this;
-        }
-
         public Order Build()
         {
-            _order.TotalAmount = _order.Items.Sum(i => i.TotalPrice);
-            return _order;
+            var order = new Order(_customerId, _createdBy);
+            
+            // Add items using domain methods
+            foreach (var (productId, productName, quantity, unitPrice) in _items)
+            {
+                order.AddItem(productId, productName, quantity, unitPrice, _createdBy);
+            }
+
+            return order;
+        }
+
+        /// <summary>
+        /// Builds and confirms the order
+        /// </summary>
+        public Order BuildConfirmed()
+        {
+            var order = Build();
+            order.Confirm(_createdBy);
+            return order;
         }
     }
 
+    /// <summary>
+    /// Builder for creating Product domain entities in tests.
+    /// Uses professional domain entity constructor instead of property manipulation.
+    /// </summary>
     public class ProductBuilder
     {
-        private Product _product;
+        private string _name;
+        private string _description;
+        private decimal _price;
+        private int _stockQuantity;
+        private string _createdBy;
+        private int _minimumStockLevel;
 
         public ProductBuilder()
         {
-            _product = new Product
-            {
-                Id = Guid.NewGuid(),
-                Name = "Test Product",
-                Description = "A test product",
-                Price = 99.99m,
-                StockQuantity = 50,
-                CreatedAt = DateTime.UtcNow
-            };
-        }
-
-        public ProductBuilder WithId(Guid id)
-        {
-            _product.Id = id;
-            return this;
+            _name = "Test Product";
+            _description = "A test product";
+            _price = 99.99m;
+            _stockQuantity = 50;
+            _createdBy = "test-user";
+            _minimumStockLevel = 10;
         }
 
         public ProductBuilder WithName(string name)
         {
-            _product.Name = name;
-            return this;
-        }
-
-        public ProductBuilder WithPrice(decimal price)
-        {
-            _product.Price = price;
-            return this;
-        }
-
-        public ProductBuilder WithStock(int quantity)
-        {
-            _product.StockQuantity = quantity;
+            _name = name;
             return this;
         }
 
         public ProductBuilder WithDescription(string description)
         {
-            _product.Description = description;
+            _description = description;
             return this;
         }
 
-        /// <summary>
-        /// Creates a product with creation timestamp for testing
-        /// </summary>
-        public ProductBuilder WithCreatedDate(DateTime createdAt)
+        public ProductBuilder WithPrice(decimal price)
         {
-            _product.CreatedAt = createdAt;
+            _price = price;
+            return this;
+        }
+
+        public ProductBuilder WithStock(int quantity)
+        {
+            _stockQuantity = quantity;
+            return this;
+        }
+
+        public ProductBuilder WithCreatedBy(string createdBy)
+        {
+            _createdBy = createdBy;
+            return this;
+        }
+
+        public ProductBuilder WithMinimumStockLevel(int minimumLevel)
+        {
+            _minimumStockLevel = minimumLevel;
             return this;
         }
 
         /// <summary>
         /// Creates a product with invalid data for negative testing
+        /// Note: This will throw exceptions when Build() is called, as expected for negative tests
         /// </summary>
         public ProductBuilder WithInvalidData()
         {
-            _product.Name = ""; // Invalid empty name
-            _product.Price = -1m; // Invalid negative price  
-            _product.StockQuantity = -1; // Invalid negative stock
+            _name = ""; // Invalid empty name
+            _price = -1m; // Invalid negative price  
+            _stockQuantity = -1; // Invalid negative stock
             return this;
         }
 
-        public Product Build() => _product;
+        /// <summary>
+        /// Builds the Product using professional domain entity constructor
+        /// </summary>
+        public Product Build() => new Product(
+            _name, 
+            _description, 
+            _price, 
+            _stockQuantity, 
+            _createdBy,
+            _minimumStockLevel);
     }
 }

@@ -1,0 +1,84 @@
+{
+  "gateway": {
+    "baseUrl": "http://localhost:6000",
+    "endpoints": {
+      "status": "/gateway/status",
+      "routes": "/gateway/routes",
+      "auth_token": "/auth/token",
+      "test_users": "/auth/test-users"
+    }
+  },
+  "inventory": {
+    "baseUrl": "http://localhost:5000",
+    "baseUrlViaGateway": "http://localhost:6000/inventory",
+    "endpoints": {
+      "health": "/health",
+      "products": "/products",
+      "productById": "/products/{id}",
+      "stockReservations": "/api/stockreservations",
+      "reservationsByOrder": "/api/stockreservations/order/{orderId}",
+      "reservationById": "/api/stockreservations/{reservationId}"
+    }
+  },
+  "sales": {
+    "baseUrl": "http://localhost:5001",
+    "baseUrlViaGateway": "http://localhost:6000/sales",
+    "endpoints": {
+      "health": "/health",
+      "orders": "/orders",
+      "orderById": "/orders/{id}",
+      "confirmOrder": "/orders/{id}/confirm",
+      "cancelOrder": "/orders/{id}/cancel",
+      "fulfillOrder": "/orders/{id}/fulfill"
+    }
+  },
+  "testUsers": {
+    "admin": {
+      "username": "admin",
+      "password": "admin123",
+      "role": "admin"
+    },
+    "customer1": {
+      "username": "customer1", 
+      "password": "password123",
+      "role": "customer"
+    },
+    "customer2": {
+      "username": "customer2",
+      "password": "password123", 
+      "role": "customer"
+    },
+    "manager": {
+      "username": "manager",
+      "password": "manager123",
+      "role": "manager"
+    }
+  },
+  "testData": {
+    "products": [
+      {
+        "name": "Laptop Gamer",
+        "description": "Notebook para jogos de alta performance",
+        "price": 2999.99,
+        "stockQuantity": 10
+      },
+      {
+        "name": "Mouse Gamer",
+        "description": "Mouse com sensor óptico de alta precisão",
+        "price": 89.99,
+        "stockQuantity": 50
+      },
+      {
+        "name": "Workstation Profissional",
+        "description": "Computador de alta performance",
+        "price": 15000.00,
+        "stockQuantity": 3
+      }
+    ],
+    "customers": [
+      "123e4567-e89b-12d3-a456-426614174001",
+      "123e4567-e89b-12d3-a456-426614174002",
+      "123e4567-e89b-12d3-a456-426614174003"
+    ]
+  }
+}

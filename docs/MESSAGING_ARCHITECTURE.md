@@ -1,56 +1,32 @@
 # Messaging Architecture
 
-## ?? **Visão Geral**
+## Overview
 
-Esta arquitetura de messaging foi projetada para ser profissional, escalável e seguir as melhores práticas da indústria, **sem implementações fake no código de produção**.
+This messaging architecture is designed to be professional, scalable, and follow industry best practices, **without fake implementations in production code**.
 
-## ??? **Arquitetura por Ambiente**
+## Architecture by Environment
 
-### **Production Environment**
-- ? **RealEventPublisher** com Rebus/RabbitMQ
-- ? Configurado via `appsettings.Production.json`
-- ? Suporte a ambiente-específico
+### Production Environment
+- ? **RealEventPublisher** with Rebus/RabbitMQ
+- ? Configured via `appsettings.Production.json`
+- ? Environment-specific support
 - ? **Messaging.Enabled = true**
 
-### **Development Environment**  
-- ? **NullEventPublisher** quando messaging desabilitado
-- ? **RealEventPublisher** quando messaging habilitado
-- ? Configuração flexível via `appsettings.Development.json`
-- ? **Messaging.Enabled = false** (padrão para desenvolvimento local)
+### Development Environment  
+- ? **NullEventPublisher** when messaging disabled
+- ? **RealEventPublisher** when messaging enabled
+- ? Flexible configuration via `appsettings.Development.json`
+- ? **Messaging.Enabled = false** (default for local development)
 
-### **Testing Environment**
-- ? **MockEventPublisher** isolado na infraestrutura de testes
-- ? Localizado em `tests/*/TestInfrastructure/Mocks/`
-- ? **MessagingTestFixture** para configuração de testes
-- ? **Completamente separado** do código de produção
+### Testing Environment
+- ? **MockEventPublisher** isolated in test infrastructure
+- ? Located in `tests/*/TestInfrastructure/Mocks/`
+- ? **MessagingTestFixture** for test configuration
+- ? **Completely separated** from production code
 
-## ?? **Configuração**
+## Configuration
 
-### **Sales API**
-
-#### Production (`appsettings.Production.json`)
-```json
-{
-  "Messaging": {
-    "Enabled": true,
-    "ConnectionString": "amqp://user:password@localhost:5672",
-    "Workers": 5
-  }
-}
-```
-
-#### Development (`appsettings.Development.json`)
-```json
-{
-  "Messaging": {
-    "Enabled": false,
-    "ConnectionString": "amqp://admin:admin123@localhost:5672/",
-    "Workers": 1
-  }
-}
-```
-
-### **Inventory API**
+### Sales API
 
 #### Production (`appsettings.Production.json`)
 ```json
@@ -74,49 +50,73 @@ Esta arquitetura de messaging foi projetada para ser profissional, escalável e s
 }
 ```
 
-## ?? **Implementações**
+### Inventory API
 
-### **Production Implementations**
-| Serviço | Implementação | Localização | Uso |
-|---------|---------------|-------------|-----|
-| **Sales API** | `RealEventPublisher` | `src/sales.api/Services/EventPublisher/RealEventPublisher.cs` | Produção com Rebus |
-| **Inventory API** | `InventoryEventPublisher` | `src/inventory.api/Configuration/MessagingConfiguration.cs` | Produção com Rebus |
+#### Production (`appsettings.Production.json`)
+```json
+{
+  "Messaging": {
+    "Enabled": true,
+    "ConnectionString": "amqp://user:password@localhost:5672",
+    "Workers": 5
+  }
+}
+```
 
-### **Null Object Pattern** (Messaging Desabilitado)
-| Serviço | Implementação | Localização | Uso |
-|---------|---------------|-------------|-----|
-| **Sales API** | `NullEventPublisher` | `src/sales.api/Configuration/MessagingConfiguration.cs` | Messaging desabilitado |
-| **Inventory API** | `NullEventPublisher` | `src/inventory.api/Configuration/MessagingConfiguration.cs` | Messaging desabilitado |
+#### Development (`appsettings.Development.json`)
+```json
+{
+  "Messaging": {
+    "Enabled": false,
+    "ConnectionString": "amqp://admin:admin123@localhost:5672/",
+    "Workers": 1
+  }
+}
+```
 
-### **Test Implementations**
-| Serviço | Implementação | Localização | Uso |
-|---------|---------------|-------------|-----|
-| **Testes** | `MockEventPublisher` | `tests/SalesAPI.Tests.Professional/TestInfrastructure/Mocks/` | Somente testes |
-| **Test Fixture** | `MessagingTestFixture` | `tests/SalesAPI.Tests.Professional/TestInfrastructure/Fixtures/` | Configuração de testes |
+## Implementations
 
-## ?? **Princípios da Arquitetura**
+### Production Implementations
+| Service | Implementation | Location | Usage |
+|---------|----------------|----------|-------|
+| **Sales API** | `RealEventPublisher` | `src/sales.api/Services/EventPublisher/RealEventPublisher.cs` | Production with Rebus |
+| **Inventory API** | `InventoryEventPublisher` | `src/inventory.api/Configuration/MessagingConfiguration.cs` | Production with Rebus |
 
-### **? Código Limpo**
-- **Sem implementações fake em produção**
-- **Separação clara** entre código de produção e teste
-- **Null Object Pattern** para cenários de messaging desabilitado
-- **Factory Pattern** para criação de implementações
+### Null Object Pattern (Messaging Disabled)
+| Service | Implementation | Location | Usage |
+|---------|----------------|----------|-------|
+| **Sales API** | `NullEventPublisher` | `src/sales.api/Configuration/MessagingConfiguration.cs` | Messaging disabled |
+| **Inventory API** | `NullEventPublisher` | `src/inventory.api/Configuration/MessagingConfiguration.cs` | Messaging disabled |
 
-### **? Configuração Flexível**
-- **Configuração por ambiente** via appsettings
-- **Habilitação/desabilitação** via configuração
-- **Parâmetros específicos** por ambiente (workers, connection strings)
-- **Suporte a múltiplos ambientes**
+### Test Implementations
+| Service | Implementation | Location | Usage |
+|---------|----------------|----------|-------|
+| **Tests** | `MockEventPublisher` | `tests/SalesAPI.Tests.Professional/TestInfrastructure/Mocks/` | Testing only |
+| **Test Fixture** | `MessagingTestFixture` | `tests/SalesAPI.Tests.Professional/TestInfrastructure/Fixtures/` | Test configuration |
 
-### **? Testabilidade**
-- **MockEventPublisher** isolado nos testes
-- **MessagingTestFixture** para configuração de testes
-- **Event capture e verification** nos testes
-- **Limpeza automática** entre testes
+## Architecture Principles
 
-## ?? **Fluxo de Mensagens**
+### Clean Code
+- **No fake implementations in production**
+- **Clear separation** between production and test code
+- **Null Object Pattern** for disabled messaging scenarios
+- **Factory Pattern** for implementation creation
 
-### **Sales API ? Inventory API**
+### Flexible Configuration
+- **Environment-based configuration** via appsettings
+- **Enable/disable** via configuration
+- **Environment-specific parameters** (workers, connection strings)
+- **Multi-environment support**
+
+### Testability
+- **MockEventPublisher** isolated in tests
+- **MessagingTestFixture** for test configuration
+- **Event capture and verification** in tests
+- **Automatic cleanup** between tests
+
+## Message Flow
+
+### Sales API ? Inventory API
 ```
 Sales API (Order Confirmed)
     ? RealEventPublisher
@@ -125,7 +125,7 @@ Sales API (Order Confirmed)
 Inventory API (Order Processing)
 ```
 
-### **Test Environment**
+### Test Environment
 ```
 Test Method
     ? MockEventPublisher
@@ -134,48 +134,49 @@ Test Method
 Test Verification
 ```
 
-## ??? **Validações de Arquitetura**
+## Architecture Validations
 
-### **? Implementações Removidas**
+### Removed Implementations
 - ~~`DummyEventPublisher.cs`~~ (Sales API)
 - ~~`DummyEventPublisher.cs`~~ (Inventory API)
-- ~~`MockEventPublisher.cs`~~ (Sales API - movido para testes)
+- ~~`MockEventPublisher.cs`~~ (Sales API - moved to tests)
 - ~~`DevMockEventPublisher`~~ (EventPublisherFactory)
 
-### **? Implementações Atuais**
+### Current Implementations
 - `RealEventPublisher` (Sales API)
 - `InventoryEventPublisher` (Inventory API)
-- `NullEventPublisher` (ambos, quando messaging desabilitado)
-- `MockEventPublisher` (apenas em testes)
+- `NullEventPublisher` (both, when messaging disabled)
+- `MockEventPublisher` (tests only)
 
-## ?? **Como Usar**
+## Usage Guidelines
 
-### **Para Produção**
-1. **Configurar** `Messaging.Enabled = true`
-2. **Definir** connection string do RabbitMQ
-3. **Configurar** workers conforme necessário
-4. **Deploy** com configurações de produção
+### For Production
+1. **Configure** `Messaging.Enabled = true`
+2. **Set** RabbitMQ connection string
+3. **Configure** workers as needed
+4. **Deploy** with production settings
 
-### **Para Desenvolvimento**
-1. **Manter** `Messaging.Enabled = false` para desenvolvimento local
-2. **Habilitar** `Messaging.Enabled = true` para testar com RabbitMQ
-3. **Configurar** RabbitMQ local se necessário
+### For Development
+1. **Keep** `Messaging.Enabled = false` for local development
+2. **Enable** `Messaging.Enabled = true` to test with RabbitMQ
+3. **Configure** local RabbitMQ if needed
 
-### **Para Testes**
-1. **Usar** `MessagingTestFixture` nos testes
-2. **Verificar** eventos capturados via `MockEventPublisher`
-3. **Limpar** eventos entre testes com `ClearPublishedEvents()`
+### For Testing
+1. **Use** `MessagingTestFixture` in tests
+2. **Verify** captured events via `MockEventPublisher`
+3. **Clean** events between tests with `ClearPublishedEvents()`
 
-## ? **Benefícios Alcançados**
+## Benefits Achieved
 
-| Aspecto | Benefício |
-|---------|-----------|
-| **Qualidade** | Zero implementações fake em produção |
-| **Manutenção** | Configuração centralizada e flexível |
-| **Testabilidade** | Infraestrutura de testes isolada e robusta |
-| **Escalabilidade** | Suporte a múltiplos ambientes e configurações |
-| **Profissionalismo** | Arquitetura production-ready |
+| Aspect | Benefit |
+|--------|---------|
+| **Quality** | Zero fake implementations in production |
+| **Maintenance** | Centralized and flexible configuration |
+| **Testability** | Isolated and robust test infrastructure |
+| **Scalability** | Support for multiple environments and configurations |
+| **Professionalism** | Production-ready architecture |
 
 ---
-*Documentação atualizada: Dezembro 2024*  
-*Arquitetura implementada seguindo best practices da indústria*
+
+*Documentation updated: December 2024*  
+*Architecture implemented following industry best practices*

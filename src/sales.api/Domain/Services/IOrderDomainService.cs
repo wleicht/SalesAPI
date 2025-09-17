@@ -1,7 +1,6 @@
 using SalesApi.Domain.Entities;
 using SalesApi.Domain.DomainEvents;
 using SalesApi.Domain.Repositories;
-using BuildingBlocks.Infrastructure.Messaging;
 
 namespace SalesApi.Domain.Services
 {
@@ -10,30 +9,6 @@ namespace SalesApi.Domain.Services
     /// that don't naturally belong to a single entity. Orchestrates order lifecycle management
     /// with cross-cutting concerns including validation, event publishing, and external integration.
     /// </summary>
-    /// <remarks>
-    /// Domain Service Responsibilities:
-    /// 
-    /// Business Process Orchestration:
-    /// - Complex order operations involving multiple entities
-    /// - Cross-aggregate business logic and validation
-    /// - Domain event coordination and publishing
-    /// - Business rule enforcement across order lifecycle
-    /// 
-    /// Integration Coordination:
-    /// - External service integration patterns
-    /// - Cross-domain communication and coordination
-    /// - Event-driven architecture participation
-    /// - Distributed transaction coordination
-    /// 
-    /// Business Logic Centralization:
-    /// - Order lifecycle state management
-    /// - Complex validation and business rule enforcement
-    /// - Performance optimization for business operations
-    /// - Consistency maintenance across order operations
-    /// 
-    /// The interface follows Domain-Driven Design principles by encapsulating
-    /// business logic that doesn't naturally fit within entity boundaries.
-    /// </remarks>
     public interface IOrderDomainService
     {
         /// <summary>

@@ -1,5 +1,5 @@
 using FluentAssertions;
-using InventoryApi.Models;
+using InventoryApi.Domain.Entities;
 using SalesAPI.Tests.Professional.TestInfrastructure.Builders;
 using Xunit;
 
@@ -8,7 +8,7 @@ namespace SalesAPI.Tests.Professional.Domain.Tests.Models
     /// <summary>
     /// Pure domain logic tests for Product entity.
     /// Tests business rules and calculations without infrastructure dependencies.
-    /// Refactored to use TestDataBuilders to eliminate code duplication.
+    /// Tests use domain methods instead of direct property manipulation.
     /// </summary>
     public class ProductTests
     {
@@ -16,72 +16,59 @@ namespace SalesAPI.Tests.Professional.Domain.Tests.Models
         public void CreateProduct_WithValidData_ShouldInitializeCorrectly()
         {
             // Arrange
-            var productId = Guid.NewGuid();
             var name = "Test Product";
             var description = "A test product for unit testing";
             var price = 99.99m;
             var stockQuantity = 50;
             
-            // Act - Using TestDataBuilder instead of manual construction
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithId(productId)
-                .WithName(name)
-                .WithDescription(description)
-                .WithPrice(price)
-                .WithStock(stockQuantity)
-                .Build();
+            // Act - Using domain entity constructor
+            var product = new Product(name, description, price, stockQuantity, "test-user");
             
             // Assert
-            product.Id.Should().Be(productId);
             product.Name.Should().Be(name);
             product.Description.Should().Be(description);
             product.Price.Should().Be(price);
             product.StockQuantity.Should().Be(stockQuantity);
+            product.IsActive.Should().BeTrue();
         }
 
         [Fact]
-        public void DebitStock_WithSufficientQuantity_ShouldReduceStock()
+        public void RemoveStock_WithSufficientQuantity_ShouldReduceStock()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(100)
-                .Build();
-            var debitAmount = 25;
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            var removeAmount = 25;
             
-            // Act - Simulating stock debit business logic
-            product.StockQuantity -= debitAmount;
+            // Act - Using domain method
+            product.RemoveStock(removeAmount, "test-user");
             
             // Assert
             product.StockQuantity.Should().Be(75);
         }
 
         [Fact]
-        public void DebitStock_ExactAmount_ShouldResultInZeroStock()
+        public void RemoveStock_ExactAmount_ShouldResultInZeroStock()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(50)
-                .Build();
-            var debitAmount = 50;
+            var product = new Product("Test Product", "Description", 50.00m, 50, "test-user");
+            var removeAmount = 50;
             
             // Act
-            product.StockQuantity -= debitAmount;
+            product.RemoveStock(removeAmount, "test-user");
             
             // Assert
             product.StockQuantity.Should().Be(0);
         }
 
         [Fact]
-        public void CreditStock_ShouldIncreaseStock()
+        public void AddStock_ShouldIncreaseStock()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(25)
-                .Build();
-            var creditAmount = 75;
+            var product = new Product("Test Product", "Description", 50.00m, 25, "test-user");
+            var addAmount = 75;
             
-            // Act - Simulating stock replenishment business logic
-            product.StockQuantity += creditAmount;
+            // Act - Using domain method
+            product.AddStock(addAmount, "test-user");
             
             // Assert
             product.StockQuantity.Should().Be(100);
@@ -91,13 +78,11 @@ namespace SalesAPI.Tests.Professional.Domain.Tests.Models
         public void HasSufficientStock_WithEnoughQuantity_ShouldReturnTrue()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(100)
-                .Build();
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
             var requestedQuantity = 50;
             
-            // Act - Business logic for stock availability check
-            var hasSufficientStock = product.StockQuantity >= requestedQuantity;
+            // Act - Using domain method
+            var hasSufficientStock = product.HasSufficientStock(requestedQuantity);
             
             // Assert
             hasSufficientStock.Should().BeTrue();
@@ -107,13 +92,11 @@ namespace SalesAPI.Tests.Professional.Domain.Tests.Models
         public void HasSufficientStock_WithInsufficientQuantity_ShouldReturnFalse()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(25)
-                .Build();
+            var product = new Product("Test Product", "Description", 50.00m, 25, "test-user");
             var requestedQuantity = 50;
             
             // Act
-            var hasSufficientStock = product.StockQuantity >= requestedQuantity;
+            var hasSufficientStock = product.HasSufficientStock(requestedQuantity);
             
             // Assert
             hasSufficientStock.Should().BeFalse();
@@ -123,119 +106,191 @@ namespace SalesAPI.Tests.Professional.Domain.Tests.Models
         public void HasSufficientStock_WithExactQuantity_ShouldReturnTrue()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(50)
-                .Build();
+            var product = new Product("Test Product", "Description", 50.00m, 50, "test-user");
             var requestedQuantity = 50;
             
             // Act
-            var hasSufficientStock = product.StockQuantity >= requestedQuantity;
+            var hasSufficientStock = product.HasSufficientStock(requestedQuantity);
             
             // Assert
             hasSufficientStock.Should().BeTrue();
         }
 
         [Fact]
-        public void CalculateValue_ShouldMultiplyPriceByStock()
+        public void ReserveStock_WithSufficientQuantity_ShouldReduceStock()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithPrice(29.99m)
-                .WithStock(100)
-                .Build();
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            var reserveAmount = 25;
             
-            // Act - Business logic for inventory value calculation
-            var totalValue = product.Price * product.StockQuantity;
+            // Act - Using domain method
+            product.ReserveStock(reserveAmount, "test-user");
             
             // Assert
-            totalValue.Should().Be(2999.00m);
+            product.StockQuantity.Should().Be(75);
+        }
+
+        [Fact]
+        public void AllocateStock_WithSufficientQuantity_ShouldReduceStock()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            var allocateAmount = 30;
+            
+            // Act - Using domain method
+            product.AllocateStock(allocateAmount, "test-user");
+            
+            // Assert
+            product.StockQuantity.Should().Be(70);
         }
 
         [Fact]
         public void UpdatePrice_ShouldChangeProductPrice()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithPrice(50.00m)
-                .Build();
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
             var newPrice = 75.00m;
             
-            // Act
-            product.Price = newPrice;
+            // Act - Using domain method
+            product.UpdatePrice(newPrice, "test-user");
             
             // Assert
             product.Price.Should().Be(newPrice);
         }
 
         [Fact]
-        public void Product_WithZeroStock_ShouldHandleCorrectly()
+        public void UpdateName_ShouldChangeProductName()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(0)
-                .Build();
+            var product = new Product("Old Name", "Description", 50.00m, 100, "test-user");
+            var newName = "New Product Name";
             
-            // Act & Assert
-            product.StockQuantity.Should().Be(0);
-            
-            // Business logic checks
-            var hasSufficientStockForAny = product.StockQuantity >= 1;
-            hasSufficientStockForAny.Should().BeFalse();
-            
-            var totalValue = product.Price * product.StockQuantity;
-            totalValue.Should().Be(0);
-        }
-
-        [Fact]
-        public void Product_WithHighStock_ShouldHandleCorrectly()
-        {
-            // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(1_000_000)
-                .Build();
-            
-            // Act & Assert
-            product.StockQuantity.Should().Be(1_000_000);
-            
-            // Business logic for large quantities
-            var canFulfillLargeOrder = product.StockQuantity >= 500_000;
-            canFulfillLargeOrder.Should().BeTrue();
-        }
-
-        [Fact]
-        public void Product_WithDecimalPrice_ShouldHandlePrecision()
-        {
-            // Arrange
-            var precisePrice = 33.333333m;
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithPrice(precisePrice)
-                .WithStock(3)
-                .Build();
-            
-            // Act
-            var totalValue = product.Price * product.StockQuantity;
+            // Act - Using domain method
+            product.UpdateName(newName, "test-user");
             
             // Assert
-            product.Price.Should().Be(33.333333m);
-            totalValue.Should().Be(99.999999m);
+            product.Name.Should().Be(newName);
         }
 
         [Fact]
-        public void MultipleStockOperations_ShouldMaintainCorrectBalance()
+        public void Deactivate_ShouldMakeProductInactive()
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(100)
-                .Build();
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
             
-            // Act - Simulate multiple operations
-            product.StockQuantity -= 30; // Debit 30
-            product.StockQuantity += 20; // Credit 20
-            product.StockQuantity -= 15; // Debit 15
-            product.StockQuantity += 5;  // Credit 5
+            // Act - Using domain method
+            product.Deactivate("test-user");
             
             // Assert
-            product.StockQuantity.Should().Be(80); // 100 - 30 + 20 - 15 + 5
+            product.IsActive.Should().BeFalse();
+        }
+
+        [Fact]
+        public void Activate_DeactivatedProduct_ShouldMakeProductActive()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            product.Deactivate("test-user");
+            
+            // Act - Using domain method
+            product.Activate("test-user");
+            
+            // Assert
+            product.IsActive.Should().BeTrue();
+        }
+
+        [Fact]
+        public void IsOutOfStock_WithZeroStock_ShouldReturnTrue()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 1, "test-user");
+            product.RemoveStock(1, "test-user"); // Make it zero
+            
+            // Act - Using domain method
+            var isOutOfStock = product.IsOutOfStock();
+            
+            // Assert
+            isOutOfStock.Should().BeTrue();
+        }
+
+        [Fact]
+        public void IsLowStock_BelowMinimumLevel_ShouldReturnTrue()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 50, "test-user", minimumStockLevel: 20);
+            product.RemoveStock(40, "test-user"); // Leaves 10, below minimum of 20
+            
+            // Act - Using domain method
+            var isLowStock = product.IsLowStock();
+            
+            // Assert
+            isLowStock.Should().BeTrue();
+        }
+
+        [Fact]
+        public void IsAvailableForOrder_ActiveWithStock_ShouldReturnTrue()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            
+            // Act - Using domain method
+            var isAvailable = product.IsAvailableForOrder();
+            
+            // Assert
+            isAvailable.Should().BeTrue();
+        }
+
+        [Fact]
+        public void IsAvailableForOrder_InactiveWithStock_ShouldReturnFalse()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            product.Deactivate("test-user");
+            
+            // Act - Using domain method
+            var isAvailable = product.IsAvailableForOrder();
+            
+            // Assert
+            isAvailable.Should().BeFalse();
+        }
+
+        [Fact]
+        public void RemoveStock_MoreThanAvailable_ShouldThrowException()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 10, "test-user");
+            
+            // Act & Assert
+            product.Invoking(p => p.RemoveStock(15, "test-user"))
+                .Should().Throw<InvalidOperationException>()
+                .WithMessage("*Cannot remove 15 units. Only 10 units available*");
+        }
+
+        [Fact]
+        public void ReserveStock_OnInactiveProduct_ShouldThrowException()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            product.Deactivate("test-user");
+            
+            // Act & Assert
+            product.Invoking(p => p.ReserveStock(10, "test-user"))
+                .Should().Throw<InvalidOperationException>()
+                .WithMessage("Cannot reserve stock for inactive product");
+        }
+
+        [Fact]
+        public void ReleaseReservedStock_ShouldIncreaseStock()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            product.ReserveStock(20, "test-user"); // Stock becomes 80
+            
+            // Act - Using domain method
+            product.ReleaseReservedStock(20, "test-user");
+            
+            // Assert
+            product.StockQuantity.Should().Be(100); // Back to original
         }
 
         [Theory]
@@ -244,22 +299,49 @@ namespace SalesAPI.Tests.Professional.Domain.Tests.Models
         [InlineData(100, 101, false)]
         [InlineData(0, 1, false)]
         [InlineData(50, 25, true)]
-        public void StockAvailabilityCheck_WithVariousQuantities_ShouldReturnExpectedResult(
+        public void HasSufficientStock_WithVariousQuantities_ShouldReturnExpectedResult(
             int currentStock, int requestedQuantity, bool expectedResult)
         {
             // Arrange
-            var product = TestDataBuilders.Products.NewProduct()
-                .WithStock(currentStock)
-                .Build();
+            var product = new Product("Test Product", "Description", 50.00m, currentStock, "test-user");
             
             // Act
-            var hasStock = product.StockQuantity >= requestedQuantity;
+            var hasStock = product.HasSufficientStock(requestedQuantity);
             
             // Assert
             hasStock.Should().Be(expectedResult);
         }
 
-        // Note: Removed duplicated helper method CreateTestProduct()
-        // This is now replaced by TestDataBuilders.Products pattern
+        [Fact]
+        public void CreateProduct_WithNegativePrice_ShouldThrowException()
+        {
+            // Act & Assert
+            var action = () => new Product("Test Product", "Description", -10.00m, 100, "test-user");
+            
+            action.Should().Throw<ArgumentException>()
+                .WithMessage("Product price cannot be negative*");
+        }
+
+        [Fact]
+        public void CreateProduct_WithEmptyName_ShouldThrowException()
+        {
+            // Act & Assert
+            var action = () => new Product("", "Description", 50.00m, 100, "test-user");
+            
+            action.Should().Throw<ArgumentException>()
+                .WithMessage("Product name cannot be empty*");
+        }
+
+        [Fact]
+        public void AddStock_WithZeroQuantity_ShouldThrowException()
+        {
+            // Arrange
+            var product = new Product("Test Product", "Description", 50.00m, 100, "test-user");
+            
+            // Act & Assert
+            product.Invoking(p => p.AddStock(0, "test-user"))
+                .Should().Throw<ArgumentException>()
+                .WithMessage("Quantity to add must be positive*");
+        }
     }
 }

@@ -108,23 +108,22 @@ namespace SalesApi.Domain.Entities
 
         /// <summary>
         /// Calculated total price for this line item (Quantity × UnitPrice).
-        /// Provides immediate access to line total for order calculations and validation.
+        /// Supports both computed column in database and in-memory calculation.
         /// </summary>
         /// <value>Decimal total price for this order line item</value>
         /// <remarks>
-        /// Calculation Strategy:
-        /// - Computed property for real-time accuracy
-        /// - No persistent storage to prevent inconsistency
-        /// - Automatically updated when quantity or price changes
-        /// - Used in order total calculation and validation
-        /// 
-        /// Performance Considerations:
-        /// - Simple multiplication operation with minimal overhead
-        /// - No database queries required for calculation
-        /// - Cached at order level for query optimization
-        /// - Recalculated only when underlying values change
+        /// Implementation Strategy:
+        /// - Has private setter to support Entity Framework computed columns
+        /// - Public getter returns computed value if database value is not set
+        /// - Database computed column takes precedence when available
+        /// - Fallback to calculation ensures compatibility in all scenarios
         /// </remarks>
-        public decimal TotalPrice => Quantity * UnitPrice;
+        private decimal _totalPrice;
+        public decimal TotalPrice 
+        { 
+            get => _totalPrice != 0 ? _totalPrice : Quantity * UnitPrice;
+            private set => _totalPrice = value;
+        }
 
         /// <summary>
         /// Navigation property back to the parent order.
@@ -149,20 +148,6 @@ namespace SalesApi.Domain.Entities
         /// <param name="quantity">Quantity of the product being ordered</param>
         /// <param name="unitPrice">Price per unit of the product</param>
         /// <exception cref="ArgumentException">Thrown when parameters violate business rules</exception>
-        /// <remarks>
-        /// Validation Rules:
-        /// - Order ID must not be empty
-        /// - Product ID must not be empty
-        /// - Product name must not be null or whitespace
-        /// - Quantity must be positive
-        /// - Unit price must not be negative
-        /// 
-        /// Initialization Behavior:
-        /// - All properties are set during construction
-        /// - Object is immutable after creation (except quantity updates)
-        /// - Validation ensures business rule compliance
-        /// - No external dependencies required for creation
-        /// </remarks>
         public OrderItem(Guid orderId, Guid productId, string productName, int quantity, decimal unitPrice)
         {
             if (orderId == Guid.Empty)
@@ -185,6 +170,7 @@ namespace SalesApi.Domain.Entities
             ProductName = productName.Trim();
             Quantity = quantity;
             UnitPrice = unitPrice;
+            // _totalPrice will be set by database computed column or calculated via getter
         }
 
         /// <summary>
@@ -193,28 +179,14 @@ namespace SalesApi.Domain.Entities
         /// </summary>
         /// <param name="newQuantity">New quantity value for this order item</param>
         /// <exception cref="ArgumentException">Thrown when new quantity violates business rules</exception>
-        /// <remarks>
-        /// Update Rules:
-        /// - New quantity must be positive
-        /// - Order must be in a modifiable state (enforced by Order aggregate)
-        /// - Total price is automatically recalculated
-        /// - Order total recalculation is triggered by parent aggregate
-        /// 
-        /// Business Impact:
-        /// - Changes affect order total calculation
-        /// - May impact inventory reservation requirements
-        /// - Triggers audit trail updates at order level
-        /// - May affect shipping and fulfillment calculations
-        /// 
-        /// This method is internal to the domain and should only be called
-        /// through the Order aggregate to maintain consistency boundaries.
-        /// </remarks>
         public void UpdateQuantity(int newQuantity)
         {
             if (newQuantity <= 0)
                 throw new ArgumentException("Quantity must be positive", nameof(newQuantity));
 
             Quantity = newQuantity;
+            // Reset _totalPrice to force recalculation
+            _totalPrice = 0;
         }
 
         /// <summary>
@@ -223,19 +195,6 @@ namespace SalesApi.Domain.Entities
         /// </summary>
         /// <param name="other">Other OrderItem to compare with</param>
         /// <returns>True if both items represent the same product in the same order</returns>
-        /// <remarks>
-        /// Equality Logic:
-        /// - Based on OrderId and ProductId combination
-        /// - Quantity and pricing differences do not affect equality
-        /// - Supports duplicate detection in order item collections
-        /// - Enables proper hashtable and collection behavior
-        /// 
-        /// Business Applications:
-        /// - Prevents duplicate products in the same order
-        /// - Supports order item updates and modifications
-        /// - Enables efficient collection operations
-        /// - Supports business rule validation
-        /// </remarks>
         public bool Equals(OrderItem? other)
         {
             if (other is null) return false;

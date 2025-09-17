@@ -1,0 +1,71 @@
+version: '3.8'
+
+# Infrastructure services for SalesAPI
+# Provides SQL Server and RabbitMQ for the microservices
+
+services:
+  # SQL Server for both Inventory and Sales databases
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: salesapi-sqlserver
+    environment:
+      ACCEPT_EULA: Y
+      SA_PASSWORD: Your_password123
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - salesapi-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P Your_password123 -Q 'SELECT 1'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # RabbitMQ for message queuing
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: salesapi-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"    # AMQP port
+      - "15672:15672"  # Management UI port
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - salesapi-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  salesapi-network:
+    driver: bridge
+    name: salesapi-network
+
+volumes:
+  sqlserver_data:
+    name: salesapi-sqlserver-data
+  rabbitmq_data:
+    name: salesapi-rabbitmq-data

@@ -58,28 +58,14 @@ namespace SalesApi.Controllers
         }
 
         /// <summary>
-        /// Creates a new order through CQRS command pattern.
-        /// Delegates complex order creation logic to specialized command handler.
+        /// Creates a new order through CQRS command pattern with enhanced validation and error handling.
+        /// Delegates complex order creation logic to specialized command handler with comprehensive error recovery.
         /// </summary>
         /// <param name="createOrderDto">Order creation data including customer ID and items</param>
-        /// <returns>Created order details or error information</returns>
-        /// <remarks>
-        /// Refactoring Benefits:
-        /// - Removed 300+ lines of complex business logic from controller
-        /// - Separated order creation concerns into dedicated handler
-        /// - Improved testability through command pattern
-        /// - Clear error handling and response mapping
-        /// 
-        /// The command handler now manages:
-        /// - Stock reservation coordination
-        /// - Payment processing simulation
-        /// - Event publishing for order confirmation
-        /// - Comprehensive error handling and logging
-        /// - Correlation ID management for observability
-        /// </remarks>
+        /// <returns>Created order details or detailed error information</returns>
         /// <response code="201">Order created successfully</response>
         /// <response code="400">Invalid order data or validation errors</response>
-        /// <response code="422">Business logic error - insufficient stock or payment failure</response>
+        /// <response code="422">Business logic error - insufficient stock, invalid product, or payment failure</response>
         /// <response code="500">Internal server error during order processing</response>
         [HttpPost]
         [Authorize]
@@ -93,63 +79,241 @@ namespace SalesApi.Controllers
             
             _logger.LogInformation(
                 "?? Order creation request received | Customer: {CustomerId} | Items: {ItemCount} | CorrelationId: {CorrelationId}",
-                createOrderDto.CustomerId,
-                createOrderDto.Items.Count,
+                createOrderDto?.CustomerId,
+                createOrderDto?.Items?.Count ?? 0,
                 correlationId);
 
             try
             {
-                var command = new CreateOrderCommand
+                // Enhanced input validation
+                var validationResult = ValidateCreateOrderInput(createOrderDto);
+                if (!validationResult.IsValid)
                 {
-                    CustomerId = createOrderDto.CustomerId,
-                    Items = createOrderDto.Items.Select(item => new CreateOrderItemCommand
-                    {
-                        ProductId = item.ProductId,
-                        ProductName = "", // Será preenchido pelo handler
-                        Quantity = item.Quantity,
-                        UnitPrice = 0 // Será preenchido pelo handler
-                    }).ToList(),
-                    CreatedBy = GetCurrentUser(),
-                    CorrelationId = correlationId
-                };
+                    _logger.LogWarning("?? Order creation input validation failed | CorrelationId: {CorrelationId} | Errors: {Errors}", 
+                        correlationId, string.Join("; ", validationResult.Errors));
+                    return BadRequest(CreateValidationProblemDetails("Input Validation Failed", validationResult.Errors, correlationId));
+                }
+
+                // Map DTO to command with null-safe operations
+                var command = MapToCreateOrderCommand(createOrderDto!, correlationId);
+
+                _logger.LogInformation(
+                    "?? Sending CreateOrderCommand to handler | CorrelationId: {CorrelationId}",
+                    correlationId);
 
                 var result = await _mediator.Send(command);
 
                 if (!result.IsSuccess)
                 {
-                    _logger.LogWarning(
-                        "?? Order creation failed | Customer: {CustomerId} | Error: {Error} | CorrelationId: {CorrelationId}",
-                        createOrderDto.CustomerId,
-                        result.ErrorMessage,
-                        correlationId);
-
-                    return result.ErrorCode switch
-                    {
-                        "VALIDATION_FAILED" => BadRequest(CreateProblemDetails("Validation Failed", result.ErrorMessage, 400)),
-                        "BUSINESS_RULE_VIOLATION" => UnprocessableEntity(CreateProblemDetails("Business Rule Violation", result.ErrorMessage, 422)),
-                        _ => StatusCode(500, CreateProblemDetails("Internal Server Error", result.ErrorMessage, 500))
-                    };
+                    return HandleOrderCreationFailure(result, createOrderDto!.CustomerId, correlationId);
                 }
 
                 _logger.LogInformation(
-                    "? Order created successfully | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
-                    result.Order?.Id,
-                    correlationId);
+                    "? Order created successfully | OrderId: {OrderId} | Customer: {CustomerId} | Total: {Total:C} | CorrelationId: {CorrelationId}",
+                    result.Data?.Id, createOrderDto!.CustomerId, result.Data?.TotalAmount ?? 0, correlationId);
 
                 return CreatedAtAction(
                     nameof(GetOrderById), 
-                    new { id = result.Order!.Id }, 
-                    result.Order);
+                    new { id = result.Data!.Id }, 
+                    result.Data);
+            }
+            catch (FluentValidation.ValidationException validationEx)
+            {
+                _logger.LogWarning(validationEx,
+                    "?? FluentValidation failed during order creation | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    createOrderDto?.CustomerId, correlationId);
+
+                var errors = validationEx.Errors.Select(e => $"{e.PropertyName}: {e.ErrorMessage}").ToList();
+                return BadRequest(CreateValidationProblemDetails("Validation Failed", errors, correlationId));
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.LogWarning(ex,
+                    "?? Invalid argument during order creation | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    createOrderDto?.CustomerId, correlationId);
+
+                return BadRequest(CreateProblemDetails("Invalid Argument", ex.Message, 400, correlationId));
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("insufficient", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(ex,
+                    "?? Insufficient stock during order creation | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    createOrderDto?.CustomerId, correlationId);
+
+                return UnprocessableEntity(CreateProblemDetails("Insufficient Stock", ex.Message, 422, correlationId));
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("product", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(ex,
+                    "?? Product validation failed during order creation | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    createOrderDto?.CustomerId, correlationId);
+
+                return UnprocessableEntity(CreateProblemDetails("Product Validation Failed", ex.Message, 422, correlationId));
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex,
+                    "?? External service communication failed | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    createOrderDto?.CustomerId, correlationId);
+
+                return StatusCode(502, CreateProblemDetails("External Service Error", 
+                    "Unable to communicate with external services. Please try again later.", 502, correlationId));
+            }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+            {
+                _logger.LogError(ex,
+                    "?? Request timeout during order creation | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    createOrderDto?.CustomerId, correlationId);
+
+                return StatusCode(504, CreateProblemDetails("Request Timeout", 
+                    "The request took too long to process. Please try again later.", 504, correlationId));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
                     "?? Unexpected error during order creation | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
-                    createOrderDto.CustomerId,
-                    correlationId);
+                    createOrderDto?.CustomerId, correlationId);
 
-                return StatusCode(500, CreateProblemDetails("Internal Server Error", "An unexpected error occurred", 500));
+                return StatusCode(500, CreateProblemDetails("Internal Server Error", 
+                    "An unexpected error occurred while processing your order", 500, correlationId));
             }
+        }
+
+        /// <summary>
+        /// Validates input DTO with comprehensive null checks and business rules.
+        /// </summary>
+        private static InputValidationResult ValidateCreateOrderInput(CreateOrderDtoContract? createOrderDto)
+        {
+            var errors = new List<string>();
+
+            if (createOrderDto == null)
+            {
+                errors.Add("Order data is required");
+                return new InputValidationResult { IsValid = false, Errors = errors };
+            }
+
+            if (createOrderDto.CustomerId == Guid.Empty)
+            {
+                errors.Add("Customer ID is required and must be a valid GUID");
+            }
+
+            if (createOrderDto.Items == null || !createOrderDto.Items.Any())
+            {
+                errors.Add("Order must contain at least one item");
+            }
+            else
+            {
+                for (int i = 0; i < createOrderDto.Items.Count; i++)
+                {
+                    var item = createOrderDto.Items[i];
+                    if (item.ProductId == Guid.Empty)
+                    {
+                        errors.Add($"Item {i + 1}: Product ID is required and must be a valid GUID");
+                    }
+                    if (item.Quantity <= 0)
+                    {
+                        errors.Add($"Item {i + 1}: Quantity must be greater than zero");
+                    }
+                }
+            }
+
+            return new InputValidationResult 
+            { 
+                IsValid = !errors.Any(), 
+                Errors = errors 
+            };
+        }
+
+        /// <summary>
+        /// Maps CreateOrderDto to CreateOrderCommand with safe null handling.
+        /// </summary>
+        private CreateOrderCommand MapToCreateOrderCommand(CreateOrderDtoContract createOrderDto, string correlationId)
+        {
+            return new CreateOrderCommand
+            {
+                CustomerId = createOrderDto.CustomerId,
+                Items = createOrderDto.Items?.Select(item => new CreateOrderItemCommand
+                {
+                    ProductId = item.ProductId,
+                    ProductName = "", // Will be enriched by domain service
+                    Quantity = item.Quantity,
+                    UnitPrice = 0 // Will be enriched by domain service
+                }).ToList() ?? new List<CreateOrderItemCommand>(),
+                CreatedBy = GetCurrentUser(),
+                CorrelationId = correlationId
+            };
+        }
+
+        /// <summary>
+        /// Handles order creation failures with appropriate HTTP status codes and error details.
+        /// </summary>
+        private ActionResult HandleOrderCreationFailure(OrderOperationResultDto result, Guid customerId, string correlationId)
+        {
+            _logger.LogWarning(
+                "? Order creation failed | Customer: {CustomerId} | Error: {Error} | Code: {Code} | CorrelationId: {CorrelationId}",
+                customerId, result.ErrorMessage, result.ErrorCode, correlationId);
+
+            return result.ErrorCode switch
+            {
+                "VALIDATION_FAILED" => BadRequest(CreateProblemDetails("Validation Failed", 
+                    result.ErrorMessage ?? "Order validation failed", 400, correlationId)),
+                    
+                "INVALID_ARGUMENT" => BadRequest(CreateProblemDetails("Invalid Argument", 
+                    result.ErrorMessage ?? "Invalid argument provided", 400, correlationId)),
+                    
+                "BUSINESS_RULE_VIOLATION" => UnprocessableEntity(CreateProblemDetails("Business Rule Violation", 
+                    result.ErrorMessage ?? "Business rule violation occurred", 422, correlationId)),
+                    
+                "INSUFFICIENT_STOCK" => UnprocessableEntity(CreateProblemDetails("Insufficient Stock", 
+                    result.ErrorMessage ?? "Insufficient stock available", 422, correlationId)),
+                    
+                "PRODUCT_NOT_FOUND" => UnprocessableEntity(CreateProblemDetails("Product Not Found", 
+                    result.ErrorMessage ?? "One or more products were not found", 422, correlationId)),
+                    
+                "EXTERNAL_SERVICE_ERROR" => StatusCode(502, CreateProblemDetails("External Service Error", 
+                    result.ErrorMessage ?? "External service is temporarily unavailable", 502, correlationId)),
+                    
+                "SERVICE_UNAVAILABLE" => StatusCode(503, CreateProblemDetails("Service Unavailable", 
+                    result.ErrorMessage ?? "Service is temporarily unavailable", 503, correlationId)),
+                    
+                "TIMEOUT_ERROR" => StatusCode(504, CreateProblemDetails("Timeout Error", 
+                    result.ErrorMessage ?? "Request timed out", 504, correlationId)),
+                    
+                _ => StatusCode(500, CreateProblemDetails("Internal Server Error", 
+                    result.ErrorMessage ?? "An unexpected error occurred", 500, correlationId))
+            };
+        }
+
+        /// <summary>
+        /// Creates standardized ProblemDetails response with validation errors.
+        /// </summary>
+        private ProblemDetails CreateValidationProblemDetails(string title, List<string> errors, string? correlationId = null)
+        {
+            var problemDetails = new ProblemDetails
+            {
+                Title = title,
+                Detail = $"Validation failed with {errors.Count} error(s): {string.Join("; ", errors)}",
+                Status = 400,
+                Instance = HttpContext.Request.Path
+            };
+
+            problemDetails.Extensions["errors"] = errors;
+            
+            if (!string.IsNullOrEmpty(correlationId))
+            {
+                problemDetails.Extensions["correlationId"] = correlationId;
+            }
+
+            return problemDetails;
+        }
+
+        /// <summary>
+        /// Represents the result of input validation with success status and error details.
+        /// </summary>
+        private class InputValidationResult
+        {
+            public bool IsValid { get; set; }
+            public List<string> Errors { get; set; } = new();
         }
 
         /// <summary>
@@ -275,12 +439,12 @@ namespace SalesApi.Controllers
                 {
                     return result.ErrorCode switch
                     {
-                        "CONFIRMATION_FAILED" => BadRequest(CreateProblemDetails("Confirmation Failed", result.ErrorMessage, 400)),
-                        _ => StatusCode(500, CreateProblemDetails("Internal Server Error", result.ErrorMessage, 500))
+                        "CONFIRMATION_FAILED" => BadRequest(CreateProblemDetails("Confirmation Failed", result.ErrorMessage ?? "Order confirmation failed", 400)),
+                        _ => StatusCode(500, CreateProblemDetails("Internal Server Error", result.ErrorMessage ?? "An unexpected error occurred", 500))
                     };
                 }
 
-                return Ok(result.Order);
+                return Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -321,12 +485,12 @@ namespace SalesApi.Controllers
                 {
                     return result.ErrorCode switch
                     {
-                        "CANCELLATION_FAILED" => BadRequest(CreateProblemDetails("Cancellation Failed", result.ErrorMessage, 400)),
-                        _ => StatusCode(500, CreateProblemDetails("Internal Server Error", result.ErrorMessage, 500))
+                        "CANCELLATION_FAILED" => BadRequest(CreateProblemDetails("Cancellation Failed", result.ErrorMessage ?? "Order cancellation failed", 400)),
+                        _ => StatusCode(500, CreateProblemDetails("Internal Server Error", result.ErrorMessage ?? "An unexpected error occurred", 500))
                     };
                 }
 
-                return Ok(result.Order);
+                return Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -364,12 +528,12 @@ namespace SalesApi.Controllers
                 {
                     return result.ErrorCode switch
                     {
-                        "FULFILLMENT_FAILED" => BadRequest(CreateProblemDetails("Fulfillment Failed", result.ErrorMessage, 400)),
-                        _ => StatusCode(500, CreateProblemDetails("Internal Server Error", result.ErrorMessage, 500))
+                        "FULFILLMENT_FAILED" => BadRequest(CreateProblemDetails("Fulfillment Failed", result.ErrorMessage ?? "Order fulfillment failed", 400)),
+                        _ => StatusCode(500, CreateProblemDetails("Internal Server Error", result.ErrorMessage ?? "An unexpected error occurred", 500))
                     };
                 }
 
-                return Ok(result.Order);
+                return Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -381,11 +545,10 @@ namespace SalesApi.Controllers
         /// <summary>
         /// Extracts correlation ID from request headers or generates a new one.
         /// </summary>
-        /// <returns>Valid correlation ID for request tracking</returns>
         private string GetCorrelationId()
         {
-            if (HttpContext.Request.Headers.TryGetValue("X-Correlation-Id", out var correlationId) &&
-                !string.IsNullOrWhiteSpace(correlationId))
+            if (HttpContext.Request.Headers.TryGetValue("X-Correlation-Id", out var correlationId) 
+                && !string.IsNullOrWhiteSpace(correlationId))
             {
                 return correlationId!;
             }
@@ -396,7 +559,6 @@ namespace SalesApi.Controllers
         /// <summary>
         /// Gets current user identifier from authentication context.
         /// </summary>
-        /// <returns>Current user identifier or default value</returns>
         private string GetCurrentUser()
         {
             return User.Identity?.Name ?? "system";
@@ -405,19 +567,22 @@ namespace SalesApi.Controllers
         /// <summary>
         /// Creates standardized ProblemDetails response.
         /// </summary>
-        /// <param name="title">Problem title</param>
-        /// <param name="detail">Problem detail</param>
-        /// <param name="statusCode">HTTP status code</param>
-        /// <returns>ProblemDetails instance</returns>
-        private ProblemDetails CreateProblemDetails(string title, string detail, int statusCode)
+        private ProblemDetails CreateProblemDetails(string title, string detail, int statusCode, string? correlationId = null)
         {
-            return new ProblemDetails
+            var problemDetails = new ProblemDetails
             {
                 Title = title,
                 Detail = detail,
                 Status = statusCode,
                 Instance = HttpContext.Request.Path
             };
+
+            if (!string.IsNullOrEmpty(correlationId))
+            {
+                problemDetails.Extensions["correlationId"] = correlationId;
+            }
+
+            return problemDetails;
         }
     }
 }

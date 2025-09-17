@@ -1,8 +1,11 @@
 using SalesApi.Application.Commands;
 using SalesApi.Application.DTOs;
+using SalesApi.Application.Validators;
 using SalesApi.Domain.Entities;
 using SalesApi.Domain.Services;
 using SalesApi.Domain.Repositories;
+using SalesApi.Services;
+using FluentValidation;
 using Microsoft.Extensions.Logging;
 using MediatR;
 
@@ -10,152 +13,128 @@ namespace SalesApi.Application.Handlers
 {
     /// <summary>
     /// MediatR Request Handler responsible for handling order-related commands.
-    /// Orchestrates command processing, domain service coordination, and cross-cutting concerns
-    /// including validation, logging, and transaction management for order operations.
+    /// Enhanced with comprehensive validation, error handling, and business logic enforcement.
     /// </summary>
-    /// <remarks>
-    /// Handler Responsibilities:
-    /// 
-    /// Command Processing:
-    /// - Validates command data and business rules
-    /// - Coordinates domain service operations
-    /// - Manages transaction boundaries and consistency
-    /// - Handles error scenarios and exception management
-    /// 
-    /// Application Logic:
-    /// - Maps commands to domain operations
-    /// - Coordinates multiple domain services when needed
-    /// - Implements application-specific business flows
-    /// - Manages cross-cutting concerns (logging, monitoring)
-    /// 
-    /// Integration Points:
-    /// - Domain service orchestration
-    /// - Repository pattern implementation
-    /// - Event publishing coordination
-    /// - External service integration
-    /// 
-    /// The handler follows Application Service patterns from Domain-Driven Design
-    /// and provides clean separation between API controllers and domain logic.
-    /// </remarks>
     public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, OrderOperationResultDto>
     {
         private readonly IOrderDomainService _orderDomainService;
         private readonly IOrderRepository _orderRepository;
+        private readonly IValidator<CreateOrderCommand> _validator;
         private readonly ILogger<CreateOrderCommandHandler> _logger;
 
         /// <summary>
         /// Initializes a new instance of the CreateOrderCommandHandler.
         /// </summary>
-        /// <param name="orderDomainService">Domain service for order operations</param>
-        /// <param name="orderRepository">Repository for order data access</param>
-        /// <param name="logger">Logger for operation monitoring and troubleshooting</param>
         public CreateOrderCommandHandler(
             IOrderDomainService orderDomainService,
             IOrderRepository orderRepository,
+            IValidator<CreateOrderCommand> validator,
             ILogger<CreateOrderCommandHandler> logger)
         {
             _orderDomainService = orderDomainService ?? throw new ArgumentNullException(nameof(orderDomainService));
             _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
+            _validator = validator ?? throw new ArgumentNullException(nameof(validator));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
         /// Handles the creation of a new order with comprehensive validation and processing.
-        /// Orchestrates the complete order creation workflow including item validation,
-        /// inventory coordination, and appropriate event publishing.
         /// </summary>
-        /// <param name="command">Command containing order creation data</param>
-        /// <param name="cancellationToken">Cancellation token for async operation</param>
-        /// <returns>Result containing created order or error information</returns>
-        /// <remarks>
-        /// Creation Process:
-        /// 1. Validate command data and business rules
-        /// 2. Enrich order items with product information (name, price)
-        /// 3. Map command to domain service requests
-        /// 4. Execute order creation through domain service
-        /// 5. Handle success and error scenarios
-        /// 6. Return appropriate result with order information
-        /// 
-        /// Error Handling:
-        /// - Command validation errors
-        /// - Product information retrieval errors
-        /// - Business rule violations
-        /// - Domain service exceptions
-        /// - Infrastructure failures
-        /// 
-        /// Logging and Monitoring:
-        /// - Operation start and completion logging
-        /// - Performance metrics and timing
-        /// - Error scenarios and exception details
-        /// - Business process tracking
-        /// </remarks>
         public async Task<OrderOperationResultDto> Handle(
             CreateOrderCommand command, 
             CancellationToken cancellationToken = default)
         {
+            var correlationId = command.CorrelationId ?? $"order-{Guid.NewGuid():N}";
+            
             _logger.LogInformation(
-                "?? Starting order creation for Customer: {CustomerId} | Items: {ItemCount} | CorrelationId: {CorrelationId}",
-                command.CustomerId, command.Items.Count, command.CorrelationId);
+                "?? Processing order creation | Customer: {CustomerId} | Items: {ItemCount} | User: {CreatedBy} | CorrelationId: {CorrelationId}",
+                command.CustomerId, command.Items.Count, command.CreatedBy, correlationId);
 
             try
             {
-                // Validate command data
-                var validationResult = ValidateCreateOrderCommand(command);
+                // Step 1: Comprehensive validation
+                var validationResult = await ValidateCommandAsync(command);
                 if (!validationResult.IsValid)
                 {
                     _logger.LogWarning(
-                        "? Order creation validation failed for Customer: {CustomerId} | Errors: {Errors}",
-                        command.CustomerId, string.Join(", ", validationResult.Errors));
+                        "? Order creation validation failed | Customer: {CustomerId} | Errors: {Errors} | CorrelationId: {CorrelationId}",
+                        command.CustomerId, 
+                        string.Join("; ", validationResult.Errors.Select(e => $"{e.PropertyName}: {e.ErrorMessage}")),
+                        correlationId);
 
-                    return OrderOperationResultDto.ValidationFailure(validationResult.Errors);
+                    return OrderOperationResultDto.ValidationFailure(validationResult.Errors.Select(e => e.ErrorMessage));
                 }
 
-                // Map command to domain service request (product info will be enriched by domain service)
+                // Step 2: Map command to domain service request
                 var orderItems = command.Items.Select(item => new CreateOrderItemRequest
                 {
                     ProductId = item.ProductId,
-                    ProductName = item.ProductName, // May be empty - will be enriched
+                    ProductName = item.ProductName ?? string.Empty, // Will be enriched by domain service
                     Quantity = item.Quantity,
-                    UnitPrice = item.UnitPrice // May be 0 - will be enriched
+                    UnitPrice = item.UnitPrice // Will be enriched by domain service if zero
                 }).ToList();
 
-                // Execute order creation through domain service
+                _logger.LogInformation(
+                    "?? Mapped command to domain request | ItemCount: {ItemCount} | CorrelationId: {CorrelationId}",
+                    orderItems.Count, correlationId);
+
+                // Step 3: Execute order creation through domain service
                 var order = await _orderDomainService.CreateOrderAsync(
                     command.CustomerId,
                     orderItems,
                     command.CreatedBy,
-                    command.CorrelationId,
+                    correlationId,
                     cancellationToken);
 
                 _logger.LogInformation(
-                    "? Order created successfully | OrderId: {OrderId} | Customer: {CustomerId} | Total: {Total}",
-                    order.Id, command.CustomerId, order.TotalAmount);
+                    "? Order created successfully | OrderId: {OrderId} | Customer: {CustomerId} | Total: {Total:C} | CorrelationId: {CorrelationId}",
+                    order.Id, command.CustomerId, order.TotalAmount, correlationId);
 
-                // Map domain entity to DTO
+                // Step 4: Map domain entity to DTO
                 var orderDto = MapOrderToDto(order);
                 return OrderOperationResultDto.Success(orderDto);
             }
             catch (ArgumentException ex)
             {
                 _logger.LogWarning(ex,
-                    "? Order creation failed due to invalid argument | Customer: {CustomerId}",
-                    command.CustomerId);
+                    "?? Order creation failed due to invalid argument | Customer: {CustomerId} | Error: {Error} | CorrelationId: {CorrelationId}",
+                    command.CustomerId, ex.Message, correlationId);
 
                 return OrderOperationResultDto.Failure(ex.Message, "INVALID_ARGUMENT");
             }
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex,
-                    "? Order creation failed due to business rule violation | Customer: {CustomerId}",
-                    command.CustomerId);
+                    "?? Order creation failed due to business rule violation | Customer: {CustomerId} | Error: {Error} | CorrelationId: {CorrelationId}",
+                    command.CustomerId, ex.Message, correlationId);
 
                 return OrderOperationResultDto.Failure(ex.Message, "BUSINESS_RULE_VIOLATION");
+            }
+            catch (Exception ex) when (ex.GetType().Name == "ServiceUnavailableException")
+            {
+                _logger.LogError(ex,
+                    "?? Order creation failed due to service unavailability | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    command.CustomerId, correlationId);
+
+                return OrderOperationResultDto.Failure(
+                    "External service is temporarily unavailable. Please try again later.", 
+                    "SERVICE_UNAVAILABLE");
+            }
+            catch (Exception ex) when (ex.GetType().Name == "ServiceTimeoutException")
+            {
+                _logger.LogError(ex,
+                    "?? Order creation failed due to service timeout | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    command.CustomerId, correlationId);
+
+                return OrderOperationResultDto.Failure(
+                    "Request timed out. Please try again later.", 
+                    "TIMEOUT_ERROR");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "?? Unexpected error during order creation | Customer: {CustomerId}",
-                    command.CustomerId);
+                    "?? Unexpected error during order creation | Customer: {CustomerId} | CorrelationId: {CorrelationId}",
+                    command.CustomerId, correlationId);
 
                 return OrderOperationResultDto.Failure(
                     "An unexpected error occurred while creating the order", 
@@ -164,66 +143,18 @@ namespace SalesApi.Application.Handlers
         }
 
         /// <summary>
-        /// Validates the create order command data and business rules.
-        /// Ensures command contains valid and complete information for order creation.
+        /// Validates the create order command using FluentValidation.
         /// </summary>
-        /// <param name="command">Command to validate</param>
-        /// <returns>Validation result with success status and error details</returns>
-        private CommandValidationResult ValidateCreateOrderCommand(CreateOrderCommand command)
+        private async Task<FluentValidation.Results.ValidationResult> ValidateCommandAsync(CreateOrderCommand command)
         {
-            var errors = new List<string>();
-
-            // Validate customer ID
-            if (command.CustomerId == Guid.Empty)
-                errors.Add("Customer ID is required");
-
-            // Validate created by
-            if (string.IsNullOrWhiteSpace(command.CreatedBy))
-                errors.Add("CreatedBy is required");
-
-            // Validate items
-            if (!command.Items.Any())
-                errors.Add("Order must contain at least one item");
-
-            foreach (var item in command.Items)
-            {
-                if (item.ProductId == Guid.Empty)
-                    errors.Add($"Product ID is required for all items");
-
-                if (string.IsNullOrWhiteSpace(item.ProductName))
-                    errors.Add($"Product name is required for product {item.ProductId}");
-
-                if (item.Quantity <= 0)
-                    errors.Add($"Quantity must be positive for product {item.ProductId}");
-
-                if (item.UnitPrice < 0)
-                    errors.Add($"Unit price cannot be negative for product {item.ProductId}");
-            }
-
-            // Check for duplicate products
-            var duplicateProducts = command.Items
-                .GroupBy(i => i.ProductId)
-                .Where(g => g.Count() > 1)
-                .Select(g => g.Key);
-
-            foreach (var productId in duplicateProducts)
-            {
-                errors.Add($"Duplicate product found: {productId}");
-            }
-
-            return new CommandValidationResult
-            {
-                IsValid = !errors.Any(),
-                Errors = errors
-            };
+            var validationResult = await _validator.ValidateAsync(command);
+            return validationResult;
         }
 
         /// <summary>
         /// Maps a domain Order entity to an OrderDto for API response.
         /// Provides clean separation between domain and application layers.
         /// </summary>
-        /// <param name="order">Domain order entity</param>
-        /// <returns>Order DTO for API response</returns>
         private static OrderDto MapOrderToDto(Order order)
         {
             return new OrderDto
@@ -232,7 +163,7 @@ namespace SalesApi.Application.Handlers
                 CustomerId = order.CustomerId,
                 Status = order.Status,
                 TotalAmount = order.TotalAmount,
-                Currency = "USD", // TODO: Get from domain or configuration
+                Currency = "USD", // TODO: Get from domain configuration
                 Items = order.Items.Select(item => new OrderItemDto
                 {
                     OrderId = item.OrderId,

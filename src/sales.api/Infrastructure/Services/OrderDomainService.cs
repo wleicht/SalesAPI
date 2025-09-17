@@ -2,7 +2,8 @@ using SalesApi.Domain.Entities;
 using SalesApi.Domain.Services;
 using SalesApi.Domain.Repositories;
 using SalesApi.Domain.DomainEvents;
-using BuildingBlocks.Infrastructure.Messaging;
+using SalesApi.Services;
+using BuildingBlocks.Events.Infrastructure;
 using Microsoft.Extensions.Logging;
 
 namespace SalesApi.Infrastructure.Services
@@ -39,22 +40,26 @@ namespace SalesApi.Infrastructure.Services
     public class OrderDomainService : IOrderDomainService
     {
         private readonly IOrderRepository _orderRepository;
-        private readonly IMessageBus _messageBus;
+        private readonly IEventPublisher _eventPublisher;
+        private readonly IInventoryClient _inventoryClient;
         private readonly ILogger<OrderDomainService> _logger;
 
         /// <summary>
         /// Initializes a new instance of the OrderDomainService.
         /// </summary>
         /// <param name="orderRepository">Repository for order data access</param>
-        /// <param name="messageBus">Message bus for event publishing</param>
+        /// <param name="eventPublisher">Event publisher for domain event publishing</param>
+        /// <param name="inventoryClient">Client for inventory service integration</param>
         /// <param name="logger">Logger for operation monitoring and troubleshooting</param>
         public OrderDomainService(
             IOrderRepository orderRepository,
-            IMessageBus messageBus,
+            IEventPublisher eventPublisher,
+            IInventoryClient inventoryClient,
             ILogger<OrderDomainService> logger)
         {
             _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
-            _messageBus = messageBus ?? throw new ArgumentNullException(nameof(messageBus));
+            _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
+            _inventoryClient = inventoryClient ?? throw new ArgumentNullException(nameof(inventoryClient));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -77,19 +82,25 @@ namespace SalesApi.Infrastructure.Services
             CancellationToken cancellationToken = default)
         {
             _logger.LogInformation(
-                "??? Creating order | CustomerId: {CustomerId} | ItemCount: {ItemCount} | CreatedBy: {CreatedBy}",
+                "?? Creating order | CustomerId: {CustomerId} | ItemCount: {ItemCount} | CreatedBy: {CreatedBy}",
                 customerId, orderItems.Count(), createdBy);
 
             try
             {
+                // Convert to list for multiple enumeration
+                var itemsList = orderItems.ToList();
+
                 // Validate business rules
-                ValidateOrderCreation(customerId, orderItems, createdBy);
+                ValidateOrderCreation(customerId, itemsList, createdBy);
+
+                // Enrich order items with product information
+                var enrichedItems = await EnrichOrderItemsAsync(itemsList, cancellationToken);
 
                 // Create order entity
                 var order = new Order(customerId, createdBy);
 
                 // Add items to order
-                foreach (var item in orderItems)
+                foreach (var item in enrichedItems)
                 {
                     order.AddItem(
                         item.ProductId, 
@@ -102,9 +113,9 @@ namespace SalesApi.Infrastructure.Services
                 // Persist order
                 var savedOrder = await _orderRepository.AddAsync(order, cancellationToken);
 
-                // Publish domain event
+                // Publish domain event using IEventPublisher instead of IMessageBus
                 var orderCreatedEvent = new OrderCreatedDomainEvent(savedOrder, correlationId);
-                await _messageBus.PublishAsync(orderCreatedEvent, cancellationToken);
+                await _eventPublisher.PublishAsync(orderCreatedEvent, cancellationToken);
 
                 _logger.LogInformation(
                     "? Order created successfully | OrderId: {OrderId} | Total: {Total} | EventPublished: {EventPublished}",
@@ -115,10 +126,69 @@ namespace SalesApi.Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "?? Error creating order | CustomerId: {CustomerId} | CreatedBy: {CreatedBy}",
+                    "? Error creating order | CustomerId: {CustomerId} | CreatedBy: {CreatedBy}",
                     customerId, createdBy);
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Enriches order items with product information from the inventory service.
+        /// Validates product existence and retrieves current pricing information.
+        /// </summary>
+        /// <param name="orderItems">Collection of order items to enrich</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>Enriched order items with complete product information</returns>
+        private async Task<List<CreateOrderItemRequest>> EnrichOrderItemsAsync(
+            IEnumerable<CreateOrderItemRequest> orderItems, 
+            CancellationToken cancellationToken)
+        {
+            var enrichedItems = new List<CreateOrderItemRequest>();
+
+            foreach (var item in orderItems)
+            {
+                try
+                {
+                    // Get product information from inventory service
+                    var product = await _inventoryClient.GetProductByIdAsync(item.ProductId, cancellationToken);
+                    
+                    if (product == null)
+                    {
+                        throw new InvalidOperationException($"Product {item.ProductId} not found in inventory");
+                    }
+
+                    // Check stock availability
+                    if (product.StockQuantity < item.Quantity)
+                    {
+                        throw new InvalidOperationException(
+                            $"Insufficient stock for product {product.Name}. Available: {product.StockQuantity}, Requested: {item.Quantity}");
+                    }
+
+                    // Create enriched item
+                    var enrichedItem = new CreateOrderItemRequest
+                    {
+                        ProductId = item.ProductId,
+                        ProductName = product.Name,
+                        Quantity = item.Quantity,
+                        UnitPrice = product.Price
+                    };
+
+                    enrichedItems.Add(enrichedItem);
+
+                    _logger.LogInformation(
+                        "?? Enriched order item | ProductId: {ProductId} | Name: {ProductName} | Price: {Price} | Quantity: {Quantity}",
+                        item.ProductId, product.Name, product.Price, item.Quantity);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "? Failed to enrich order item | ProductId: {ProductId}",
+                        item.ProductId);
+                    throw;
+                }
+            }
+
+            return enrichedItems;
         }
 
         /// <summary>
@@ -163,9 +233,9 @@ namespace SalesApi.Infrastructure.Services
                 // Save changes
                 var updatedOrder = await _orderRepository.UpdateAsync(order, cancellationToken);
 
-                // Publish domain event
+                // Publish domain event using IEventPublisher
                 var orderConfirmedEvent = new OrderConfirmedDomainEvent(updatedOrder, confirmedBy, correlationId);
-                await _messageBus.PublishAsync(orderConfirmedEvent, cancellationToken);
+                await _eventPublisher.PublishAsync(orderConfirmedEvent, cancellationToken);
 
                 _logger.LogInformation(
                     "? Order confirmed successfully | OrderId: {OrderId} | Status: {Status}",
@@ -176,7 +246,7 @@ namespace SalesApi.Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "?? Error confirming order | OrderId: {OrderId} | ConfirmedBy: {ConfirmedBy}",
+                    "? Error confirming order | OrderId: {OrderId} | ConfirmedBy: {ConfirmedBy}",
                     orderId, confirmedBy);
                 throw;
             }
@@ -201,7 +271,7 @@ namespace SalesApi.Infrastructure.Services
             CancellationToken cancellationToken = default)
         {
             _logger.LogInformation(
-                "? Cancelling order | OrderId: {OrderId} | CancelledBy: {CancelledBy} | Reason: {Reason}",
+                "?? Cancelling order | OrderId: {OrderId} | CancelledBy: {CancelledBy} | Reason: {Reason}",
                 orderId, cancelledBy, reason);
 
             try
@@ -229,10 +299,10 @@ namespace SalesApi.Infrastructure.Services
                 // Save changes
                 var updatedOrder = await _orderRepository.UpdateAsync(order, cancellationToken);
 
-                // Publish domain event
+                // Publish domain event using IEventPublisher
                 var orderCancelledEvent = new OrderCancelledDomainEvent(
                     updatedOrder, previousStatus, cancelledBy, reason, correlationId);
-                await _messageBus.PublishAsync(orderCancelledEvent, cancellationToken);
+                await _eventPublisher.PublishAsync(orderCancelledEvent, cancellationToken);
 
                 _logger.LogInformation(
                     "? Order cancelled successfully | OrderId: {OrderId} | PreviousStatus: {PreviousStatus}",
@@ -243,7 +313,7 @@ namespace SalesApi.Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "?? Error cancelling order | OrderId: {OrderId} | CancelledBy: {CancelledBy}",
+                    "? Error cancelling order | OrderId: {OrderId} | CancelledBy: {CancelledBy}",
                     orderId, cancelledBy);
                 throw;
             }
@@ -443,14 +513,11 @@ namespace SalesApi.Infrastructure.Services
                 if (item.ProductId == Guid.Empty)
                     throw new ArgumentException($"Product ID is required for all items");
 
-                if (string.IsNullOrWhiteSpace(item.ProductName))
-                    throw new ArgumentException($"Product name is required for product {item.ProductId}");
-
                 if (item.Quantity <= 0)
                     throw new ArgumentException($"Quantity must be positive for product {item.ProductId}");
 
-                if (item.UnitPrice < 0)
-                    throw new ArgumentException($"Unit price cannot be negative for product {item.ProductId}");
+                // Note: ProductName and UnitPrice will be enriched from inventory service
+                // so we don't validate them here
             }
 
             // Check for duplicate products

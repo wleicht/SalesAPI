@@ -7,12 +7,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using BuildingBlocks.Contracts.Products;
 using InventoryApi.Persistence;
-using InventoryApi.Models;
+using InventoryApi.Domain.Entities;
 
 namespace InventoryApi.Controllers
 {
     /// <summary>
     /// Controller for managing products with role-based authorization.
+    /// Updated to use professional domain entities instead of simple models.
     /// Read operations are open, write operations require admin role.
     /// </summary>
     [ApiController]
@@ -31,7 +32,7 @@ namespace InventoryApi.Controllers
         }
 
         /// <summary>
-        /// Creates a new product. Requires admin role.
+        /// Creates a new product using domain entity. Requires admin role.
         /// </summary>
         /// <param name="dto">Product creation data.</param>
         /// <returns>Created product details.</returns>
@@ -55,15 +56,15 @@ namespace InventoryApi.Controllers
 
             try
             {
-                var product = new Product
-                {
-                    Id = Guid.NewGuid(),
-                    Name = dto.Name,
-                    Description = dto.Description,
-                    Price = dto.Price,
-                    StockQuantity = dto.StockQuantity,
-                    CreatedAt = DateTime.UtcNow
-                };
+                // Use domain entity constructor with business logic
+                var product = new Product(
+                    dto.Name,
+                    dto.Description,
+                    dto.Price,
+                    dto.StockQuantity,
+                    "api-user" // TODO: Get from authenticated user context
+                );
+
                 _dbContext.Products.Add(product);
                 await _dbContext.SaveChangesAsync();
 
@@ -76,11 +77,24 @@ namespace InventoryApi.Controllers
                     StockQuantity = product.StockQuantity,
                     CreatedAt = product.CreatedAt
                 };
+                
                 return CreatedAtAction(nameof(GetProductById), new { id = product.Id }, result);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ProblemDetailsFactory.CreateProblemDetails(
+                    HttpContext, 
+                    statusCode: 400, 
+                    title: "Invalid product data.", 
+                    detail: ex.Message));
             }
             catch (Exception ex)
             {
-                return StatusCode(500, ProblemDetailsFactory.CreateProblemDetails(HttpContext, statusCode: 500, title: "An error occurred while creating the product.", detail: ex.Message));
+                return StatusCode(500, ProblemDetailsFactory.CreateProblemDetails(
+                    HttpContext, 
+                    statusCode: 500, 
+                    title: "An error occurred while creating the product.", 
+                    detail: ex.Message));
             }
         }
 
@@ -102,6 +116,7 @@ namespace InventoryApi.Controllers
                 return BadRequest(ProblemDetailsFactory.CreateProblemDetails(HttpContext, statusCode: 400, title: "Invalid pagination parameters."));
 
             var products = await _dbContext.Products
+                .Where(p => p.IsActive) // Only show active products
                 .OrderByDescending(p => p.CreatedAt)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -133,7 +148,7 @@ namespace InventoryApi.Controllers
         public async Task<ActionResult<ProductDto>> GetProductById(Guid id)
         {
             var product = await _dbContext.Products.FindAsync(id);
-            if (product == null)
+            if (product == null || !product.IsActive)
                 return NotFound(ProblemDetailsFactory.CreateProblemDetails(HttpContext, statusCode: 404, title: "Product not found."));
 
             var result = new ProductDto
@@ -149,7 +164,7 @@ namespace InventoryApi.Controllers
         }
 
         /// <summary>
-        /// Updates an existing product. Requires admin role.
+        /// Updates an existing product using domain methods. Requires admin role.
         /// </summary>
         /// <param name="id">Product ID to update.</param>
         /// <param name="dto">Updated product data.</param>
@@ -178,13 +193,27 @@ namespace InventoryApi.Controllers
                 var product = await _dbContext.Products.FindAsync(id);
                 if (product == null)
                 {
-                    return NotFound(ProblemDetailsFactory.CreateProblemDetails(HttpContext, statusCode: 404, title: "Product not found."));
+                    return NotFound(ProblemDetailsFactory.CreateProblemDetails(
+                        HttpContext, 
+                        statusCode: 404, 
+                        title: "Product not found."));
                 }
 
-                product.Name = dto.Name;
-                product.Description = dto.Description;
-                product.Price = dto.Price;
-                product.StockQuantity = dto.StockQuantity;
+                // Use domain methods for updates
+                product.UpdateName(dto.Name, "api-user");
+                product.UpdateDescription(dto.Description, "api-user");
+                product.UpdatePrice(dto.Price, "api-user");
+                
+                // Handle stock quantity changes
+                var currentStock = product.StockQuantity;
+                if (dto.StockQuantity > currentStock)
+                {
+                    product.AddStock(dto.StockQuantity - currentStock, "api-user");
+                }
+                else if (dto.StockQuantity < currentStock)
+                {
+                    product.RemoveStock(currentStock - dto.StockQuantity, "api-user");
+                }
 
                 await _dbContext.SaveChangesAsync();
 
@@ -200,18 +229,38 @@ namespace InventoryApi.Controllers
 
                 return Ok(result);
             }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ProblemDetailsFactory.CreateProblemDetails(
+                    HttpContext, 
+                    statusCode: 400, 
+                    title: "Invalid product data.", 
+                    detail: ex.Message));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ProblemDetailsFactory.CreateProblemDetails(
+                    HttpContext, 
+                    statusCode: 400, 
+                    title: "Business rule violation.", 
+                    detail: ex.Message));
+            }
             catch (Exception ex)
             {
-                return StatusCode(500, ProblemDetailsFactory.CreateProblemDetails(HttpContext, statusCode: 500, title: "An error occurred while updating the product.", detail: ex.Message));
+                return StatusCode(500, ProblemDetailsFactory.CreateProblemDetails(
+                    HttpContext, 
+                    statusCode: 500, 
+                    title: "An error occurred while updating the product.", 
+                    detail: ex.Message));
             }
         }
 
         /// <summary>
-        /// Deletes a product. Requires admin role.
+        /// Deactivates a product instead of deleting it. Requires admin role.
         /// </summary>
-        /// <param name="id">Product ID to delete.</param>
+        /// <param name="id">Product ID to deactivate.</param>
         /// <returns>No content if successful.</returns>
-        /// <response code="204">Product deleted successfully.</response>
+        /// <response code="204">Product deactivated successfully.</response>
         /// <response code="401">Unauthorized - JWT token required.</response>
         /// <response code="403">Forbidden - Admin role required.</response>
         /// <response code="404">Product not found.</response>
@@ -228,17 +277,25 @@ namespace InventoryApi.Controllers
                 var product = await _dbContext.Products.FindAsync(id);
                 if (product == null)
                 {
-                    return NotFound(ProblemDetailsFactory.CreateProblemDetails(HttpContext, statusCode: 404, title: "Product not found."));
+                    return NotFound(ProblemDetailsFactory.CreateProblemDetails(
+                        HttpContext, 
+                        statusCode: 404, 
+                        title: "Product not found."));
                 }
 
-                _dbContext.Products.Remove(product);
+                // Use domain method to deactivate instead of hard delete
+                product.Deactivate("api-user");
                 await _dbContext.SaveChangesAsync();
 
                 return NoContent();
             }
             catch (Exception ex)
             {
-                return StatusCode(500, ProblemDetailsFactory.CreateProblemDetails(HttpContext, statusCode: 500, title: "An error occurred while deleting the product.", detail: ex.Message));
+                return StatusCode(500, ProblemDetailsFactory.CreateProblemDetails(
+                    HttpContext, 
+                    statusCode: 500, 
+                    title: "An error occurred while deactivating the product.", 
+                    detail: ex.Message));
             }
         }
     }
